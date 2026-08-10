@@ -56,7 +56,7 @@ One sponsor is encouraging, not market validation. Three unrelated voluntary spo
 - [ ] Product screenshots and a 30–60 second demo
 - [ ] Ten external beta users across Hermes plus at least one additional ACP implementation
 - [ ] Independent security review of the built `main.js`
-- [ ] GitHub prerelease `0.2.0` published and release assets verified
+- [x] GitHub prerelease `0.2.0` published and release assets verified
 - [ ] Obsidian Community Plugins submission PR opened
 - [ ] Obsidian Community Plugins listing merged
 

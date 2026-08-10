@@ -15,7 +15,7 @@ Hermes is the first-class setup path, not the whole category. The defensible val
 Start with an MIT-licensed core and treat sponsorship as validation, not projected income:
 
 - free plugin and reproducible builds;
-- GitHub Sponsors or another transparent donation page;
+- GitHub Sponsors or another transparent donation page after beta retention is demonstrated;
 - sponsor recognition, transparent roadmap input, and optional early builds;
 - no safety fixes, privacy controls, or basic agent support behind a paywall.
 
@@ -45,19 +45,27 @@ One sponsor is encouraging, not market validation. Three unrelated voluntary spo
 - [x] Local retention and deletion controls
 - [x] README, privacy policy, security policy, license, tests, CI, and release workflow
 - [x] Isolated vault deployment path
-- [ ] Initial reviewed commit on public-repo-ready history
-- [ ] First GitHub CI run green on the declared Node matrix
+- [x] Initial reviewed commit on public-repo-ready history
+- [x] First GitHub CI run green on Node 20, 22, and 24
+- [x] Maintainer account and canonical repository confirmed: `Bum-Boo/agent-change-gate`
+- [x] Repository publicly cloneable without authentication
+- [x] Compatibility matrix publicly available with its initialize-only evidence level clearly labeled
+- [x] GitHub private vulnerability reporting enabled
+- [ ] Maintainer security-alert notification delivery manually verified
 - [ ] Trademark and domain clearance before paid brand spend
-- [ ] Maintainer GitHub organization/user and repository URL
-- [ ] Real funding URL in `manifest.json`
-- [ ] Matching `.github/FUNDING.yml`
 - [ ] Product screenshots and a 30–60 second demo
 - [ ] Ten external beta users across Hermes plus at least one additional ACP implementation
-- [ ] Published ACP compatibility matrix with exact tested versions and operating systems
 - [ ] Independent security review of the built `main.js`
-- [ ] GitHub prerelease `0.2.0`
-- [ ] Monitored private vulnerability-reporting channel enabled
-- [ ] Obsidian Community Plugins submission
+- [ ] GitHub prerelease `0.2.0` published and release assets verified
+- [ ] Obsidian Community Plugins submission PR opened
+- [ ] Obsidian Community Plugins listing merged
+
+## Post-beta monetization gate
+
+- [ ] Retention evidence above has been collected from at least ten external beta users
+- [ ] Real funding URL in `manifest.json`
+- [ ] Matching `.github/FUNDING.yml`
+- [ ] Funding disclosures and sponsor benefits are documented without gating safety fixes
 
 ## Early validation
 

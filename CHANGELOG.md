@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - 2026-08-10
+## 0.2.0 - 2026-08-11
 
 - Repositioned the plugin as Agent Change Gate: a review-before-write ACP client with first-class Hermes setup.
 - Added custom ACP launch profiles without shell interpolation or stored secret environment values.

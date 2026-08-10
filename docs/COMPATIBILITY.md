@@ -21,4 +21,4 @@ Until another implementation reaches **Verified**, public copy should say “Her
 
 ## Reporting a result
 
-Open an issue without prompts, credentials, or vault content. Include operating system, Obsidian version, transport, exact agent version, launch argument shape with secrets removed, and which of initialize, ask, propose, apply, stale-block, and cancel succeeded.
+Open a compatibility-report issue without prompts, credentials, or vault content. Include the operating system, Obsidian version, transport, exact agent version, launch argument shape with secrets removed, and which of initialize, ask, propose, apply, stale-block, and cancel succeeded.

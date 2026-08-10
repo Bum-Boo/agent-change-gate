@@ -32,7 +32,24 @@ jobs:
         run: cd dist && zip -r ../agent-change-gate-${GITHUB_REF_NAME}.zip main.js manifest.json styles.css LICENSE THIRD_PARTY_NOTICES.md LICENSES docs README.md PRIVACY.md SECURITY.md
       - name: Create checksums
         run: cd dist && sha256sum main.js manifest.json styles.css LICENSE THIRD_PARTY_NOTICES.md LICENSES/Apache-2.0.txt LICENSES/Zod-MIT.txt ../agent-change-gate-${GITHUB_REF_NAME}.zip | sed -e 's#LICENSES/##' -e 's#../##' > ../SHA256SUMS.txt
-      - name: Publish GitHub release
-        run: gh release create "${GITHUB_REF_NAME}" dist/main.js dist/manifest.json dist/styles.css dist/LICENSE dist/THIRD_PARTY_NOTICES.md dist/LICENSES/Apache-2.0.txt dist/LICENSES/Zod-MIT.txt "agent-change-gate-${GITHUB_REF_NAME}.zip" SHA256SUMS.txt --generate-notes --prerelease --verify-tag
+      - name: Publish or refresh GitHub release
+        run: |
+          assets=(
+            dist/main.js
+            dist/manifest.json
+            dist/styles.css
+            dist/LICENSE
+            dist/THIRD_PARTY_NOTICES.md
+            dist/LICENSES/Apache-2.0.txt
+            dist/LICENSES/Zod-MIT.txt
+            "agent-change-gate-${GITHUB_REF_NAME}.zip"
+            SHA256SUMS.txt
+          )
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
+            gh release edit "${GITHUB_REF_NAME}" --prerelease --verify-tag
+          else
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --generate-notes --prerelease --verify-tag
+          fi
         env:
           GH_TOKEN: ${{ github.token }}

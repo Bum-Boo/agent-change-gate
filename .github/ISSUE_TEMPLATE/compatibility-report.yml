@@ -1,0 +1,39 @@
+name: ACP compatibility report
+description: Report a successful or failed launch with a specific ACP agent version.
+title: "[Compatibility]: "
+labels:
+  - compatibility
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and exact version
+      placeholder: Hermes Agent 0.20.0
+    validations:
+      required: true
+  - type: input
+    id: transport
+    attributes:
+      label: Transport and operating system
+      placeholder: WSL on Windows 11
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Initialization succeeded
+        - Initialization failed
+        - Full ask flow succeeded
+        - Full edit/review/apply flow succeeded
+        - Full flow failed
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Redacted details
+      description: Include synthetic reproduction information only; never paste prompts, note text, keys, or provider output.
+    validations:
+      required: true

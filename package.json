@@ -1,0 +1,49 @@
+{
+  "name": "agent-change-gate",
+  "version": "0.2.0",
+  "description": "Hermes-first ACP chat with scope-checked, review-before-write note changes for Obsidian.",
+  "private": true,
+  "author": "Bum-Boo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bum-Boo/agent-change-gate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Bum-Boo/agent-change-gate/issues"
+  },
+  "homepage": "https://github.com/Bum-Boo/agent-change-gate#readme",
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "agent-client-protocol",
+    "acp",
+    "hermes-agent",
+    "review-before-write"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "smoke:acp": "node scripts/smoke-acp.mjs",
+    "validate:release": "node scripts/validate-release.mjs",
+    "check": "npm run typecheck && npm run test && npm run build && npm run validate:release",
+    "deploy:lab": "npm run build && node scripts/deploy-lab.mjs",
+    "package": "npm run build && node scripts/package-release.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "0.28.2",
+    "obsidian": "1.13.1",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

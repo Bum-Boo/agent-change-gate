@@ -2,11 +2,16 @@
 
 ## Supported versions
 
-During prerelease, only the latest prerelease is supported after one is published. Before then, no public version is supported.
+Only the latest published prerelease receives security fixes.
+
+| Version | Supported |
+| --- | --- |
+| `0.2.0` | Yes |
+| `< 0.2.0` | No |
 
 ## Report a vulnerability
 
-No private reporting channel exists before the repository is published. Do not send sensitive vulnerability details yet. Before public beta, the maintainer must enable GitHub private vulnerability reporting or publish a monitored security email and update this section. External reporters generally cannot create a private Security Advisory themselves. Never include real vault contents, credentials, provider keys, profile `.env` files, or private prompts in a public issue.
+Use [GitHub private vulnerability reporting](https://github.com/Bum-Boo/agent-change-gate/security/advisories/new). Do not report vulnerabilities through public GitHub Issues. Never include real vault contents, credentials, provider keys, profile `.env` files, or private prompts in a public report.
 
 ## Trust boundaries
 

@@ -9,7 +9,7 @@ Agent Change Gate is a desktop ACP client for deliberate note work. Choose the c
 
 A reviewable draft is shown as a bounded, complete line diff and is applied only after you approve it. Normal-sized comparisons use an exact line diff; when exact comparison work exceeds the bound, the modal uses a coarse but complete remove/add fallback. Oversized proposals that cannot be rendered completely are not applyable. If the note path or captured content changed while the agent was responding, the proposal is refused instead of being applied to stale text.
 
-> Status: prerelease candidate (`0.2.0`). Core helpers, transport bounds, session lifecycle, and state retention have automated tests, and Hermes ACP initialization has been verified. Obsidian GUI/model workflows, external beta use, and a broader compatibility matrix remain unverified.
+> Status: public prerelease (`0.2.0`) for manual testing. It is downloadable from GitHub Releases but is not yet listed in Obsidian Community Plugins. Core helpers, transport bounds, session lifecycle, and state retention have automated tests, and Hermes ACP initialization has been verified. Obsidian GUI/model workflows, external beta use, and broader compatibility remain unverified.
 
 ## What the gate covers
 
@@ -55,7 +55,7 @@ Windows native and WSL transports are supported. Hermes auto-detection tries WSL
 
 ## Install for testing
 
-1. Download the archive from [GitHub Releases](https://github.com/Bum-Boo/agent-change-gate/releases).
+1. Download `agent-change-gate-0.2.0.zip` from the [0.2.0 GitHub prerelease](https://github.com/Bum-Boo/agent-change-gate/releases/tag/0.2.0).
 2. Extract the full archive, including its license notices, into:
 
    ```text
@@ -149,9 +149,9 @@ Agent Change Gate is an independent community project. Mention of Obsidian, ACP,
 
 ## Releases and funding
 
-Version tags run tests and stage the three Obsidian runtime assets, project and third-party license notices, plus a convenience archive. The workflow will publish `0.2.0` as a prerelease when its tag is pushed. Publishing, Community Plugins submission, and adding a funding account are separate maintainer actions.
+Version `0.2.0` is published as a GitHub prerelease with the Obsidian runtime assets, project and third-party license notices, checksums, and a convenience archive. GitHub prerelease availability is separate from Obsidian Community Plugins distribution.
 
-No placeholder donation URL is shipped. Sponsorship should be enabled only with a real maintainer account after external beta retention is demonstrated; see [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md).
+Funding is not enabled. No donation URL or `.github/FUNDING.yml` is shipped. Sponsorship should be enabled only after external beta retention is demonstrated; see [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md).
 
 ## License
 

@@ -51,6 +51,8 @@ One sponsor is encouraging, not market validation. Three unrelated voluntary spo
 - [x] Repository publicly cloneable without authentication
 - [x] Compatibility matrix publicly available with its initialize-only evidence level clearly labeled
 - [x] GitHub private vulnerability reporting enabled
+- [x] Secret scanning and push protection enabled
+- [x] Extended CodeQL analysis green for JavaScript/TypeScript and GitHub Actions
 - [ ] Maintainer security-alert notification delivery manually verified
 - [ ] Trademark and domain clearance before paid brand spend
 - [ ] Product screenshots and a 30–60 second demo

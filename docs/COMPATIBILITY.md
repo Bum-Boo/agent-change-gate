@@ -6,7 +6,7 @@ Agent Change Gate uses the official `@agentclientprotocol/sdk` and speaks ACP ov
 
 | Agent | Agent version | Host OS | Obsidian | Transport | Checked | Status | Model turn |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Hermes Agent | 0.20.0 | Windows | 1.13.4 | WSL stdio: `hermes -p <profile> acp` | 2026-08-10 | Initialize-only | Not run |
+| Hermes Agent | 0.20.0 | Windows | 1.13.4 | WSL stdio: `hermes -p <profile> acp` | 2026-08-11 | Initialize-only | Not run |
 
 The automated suite also verifies argv-only spawning, denied client filesystem/terminal methods, fail-closed permission handling, bounded responses, session lifecycle, state retention, and cancellation behavior. It is not a substitute for an end-to-end test against each agent build or a manual Obsidian GUI test.
 

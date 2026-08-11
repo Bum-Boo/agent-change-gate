@@ -1,9 +1,9 @@
 {
   "id": "agent-change-gate",
   "name": "Agent Change Gate",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "minAppVersion": "1.13.4",
-  "description": "Chat with Hermes and compatible ACP agents. Scope-check edits returned through this plugin and review every draft before it can be applied.",
+  "description": "Chat with Hermes and compatible ACP agents. Review scope-checked single-note or bounded batch drafts before this plugin can apply them.",
   "author": "Bum-Boo",
   "isDesktopOnly": true
 }

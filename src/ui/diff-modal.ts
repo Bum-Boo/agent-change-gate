@@ -11,6 +11,8 @@ export interface DiffModalOptions {
   gateSummary?: string;
   agentWarnings?: string[];
   gateWarnings?: string[];
+  acceptLabel?: string;
+  rejectLabel?: string;
 }
 
 export class DiffModal extends Modal {
@@ -101,12 +103,12 @@ export class DiffModal extends Modal {
 
     const actions = contentEl.createDiv({ cls: "bounded-note-chat-diff-actions" });
     new ButtonComponent(actions)
-      .setButtonText("Apply this edit")
+      .setButtonText(this.options.acceptLabel ?? "Apply this edit")
       .setCta()
       .setDisabled(result.truncated || !hasChanges)
       .onClick(() => this.finish(true));
     new ButtonComponent(actions)
-      .setButtonText("Discard")
+      .setButtonText(this.options.rejectLabel ?? "Discard")
       .onClick(() => this.finish(false));
   }
 

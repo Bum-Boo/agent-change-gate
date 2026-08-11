@@ -15,6 +15,9 @@ export type AuditOutcome =
   | "blocked"
   | "stale"
   | "cancelled"
+  | "rolled_back"
+  | "recovery_required"
+  | "not_applied"
   | "error";
 
 export interface ScopeAuditRecord {
@@ -46,6 +49,9 @@ const OUTCOMES = new Set<AuditOutcome>([
   "blocked",
   "stale",
   "cancelled",
+  "rolled_back",
+  "recovery_required",
+  "not_applied",
   "error",
 ]);
 

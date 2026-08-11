@@ -5,6 +5,7 @@ import { Notice, PluginSettingTab, Setting } from "obsidian";
 import type { CustomAcpAgentDefinition } from "../core/types";
 import type BoundedNoteChatPlugin from "../main";
 import { AuditModal } from "./audit-modal";
+import { VaultBatchModal } from "./batch-modal";
 import { ConfirmModal } from "./confirm-modal";
 
 export class BoundedNoteChatSettingTab extends PluginSettingTab {
@@ -177,6 +178,60 @@ export class BoundedNoteChatSettingTab extends PluginSettingTab {
       });
     }
 
+    new Setting(containerEl).setName("Vault batch review (experimental)").setHeading();
+    containerEl.createEl("p", {
+      text: "Prepare edits for a bounded, explicitly selected set of Markdown notes. Each note is sent in a fresh no-history ACP turn, each draft needs its own diff review, and approved drafts still require one final batch confirmation.",
+    });
+
+    new Setting(containerEl)
+      .setName("Enable vault batch review")
+      .setDesc("Off by default. This never enables unattended writes, file creation, deletion, moves, renames, or non-Markdown edits.")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.state.settings.vaultBatchEnabled)
+        .onChange(async (value) => {
+          this.plugin.state.settings.vaultBatchEnabled = value;
+          await this.plugin.saveState();
+          this.display();
+        }));
+
+    new Setting(containerEl)
+      .setName("Maximum notes per batch")
+      .setDesc("Default 10; hard maximum 20. Candidate lists are never silently truncated.")
+      .addText((text) => text
+        .setValue(String(this.plugin.state.settings.vaultBatchMaxFiles))
+        .onChange((value) => {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed)) return;
+          this.plugin.state.settings.vaultBatchMaxFiles = Math.round(Math.min(20, Math.max(1, parsed)));
+          this.scheduleSave();
+        }));
+
+    new Setting(containerEl)
+      .setName("Maximum batch characters")
+      .setDesc("Combined selected-scope characters sent across the batch (10,000-500,000). Full host snapshots and replacements also remain under hard internal bounds.")
+      .addText((text) => text
+        .setValue(String(this.plugin.state.settings.vaultBatchMaxTotalChars))
+        .onChange((value) => {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed)) return;
+          this.plugin.state.settings.vaultBatchMaxTotalChars = Math.round(
+            Math.min(500_000, Math.max(10_000, parsed)),
+          );
+          this.scheduleSave();
+        }));
+
+    new Setting(containerEl)
+      .setName("Open batch review")
+      .setDesc("Select exact notes before any content is sent.")
+      .addButton((button) => button
+        .setButtonText("Open")
+        .setDisabled(
+          !this.plugin.state.settings.vaultBatchEnabled
+          || this.plugin.agents.length === 0
+          || this.plugin.isBatchRecoveryLocked()
+        )
+        .onClick(() => new VaultBatchModal(this.plugin).open()));
+
     new Setting(containerEl).setName("Safety and privacy").setHeading();
     containerEl.createEl("p", {
       text: "The ACP client grants no filesystem or terminal capability and denies permission requests. First-class Hermes launches set its MCP-suppression flag and send an empty session MCP list. This is a host-side review gate, not an OS sandbox: the separate agent process and its model provider may still process the scope you send.",
@@ -247,11 +302,18 @@ export class BoundedNoteChatSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Clear recovery snapshots")
-      .setDesc("Deletes local before/after copies kept for the plugin's undo command. Snapshots also expire after 30 days.")
+      .setDesc("Deletes single-note before/after copies and a completed batch recovery journal. An unresolved interrupted-batch journal cannot be cleared here. Single-note snapshots expire after 30 days; only completed batch undo journals expire after 7 days.")
       .addButton((button) => button
         .setButtonText("Clear snapshots")
         .setWarning()
+        .setDisabled(this.plugin.isBatchRecoveryOperationActive())
         .onClick(async () => {
+          if (this.plugin.isBatchRecoveryOperationActive()) {
+            new Notice("Wait for the active batch recovery operation to finish.");
+            return;
+          }
+          const expectedBatchId = this.plugin.state.batchRecovery?.id ?? null;
+          const expectedCorrupt = this.plugin.state.batchRecoveryCorrupt;
           const accepted = await new ConfirmModal(
             this.app,
             "Clear all recovery snapshots?",
@@ -259,20 +321,56 @@ export class BoundedNoteChatSettingTab extends PluginSettingTab {
             "Clear snapshots",
           ).waitForDecision();
           if (!accepted) return;
-          const previousCheckpoints = this.plugin.state.checkpoints;
-          this.plugin.state.checkpoints = {};
-          try {
-            await this.plugin.saveState();
-          } catch {
-            this.plugin.state.checkpoints = {
-              ...previousCheckpoints,
-              ...this.plugin.state.checkpoints,
-            };
-            new Notice("Recovery snapshots were not cleared because the local state file could not be updated.");
-            return;
-          }
-          new Notice("Recovery snapshots cleared.");
+          const result = await this.plugin.clearRecoveryState({
+            expectedBatchId,
+            expectedCorrupt,
+            abandonUnresolved: false,
+            clearSingleCheckpoints: true,
+          });
+          new Notice(result.message);
         }));
+
+    if (
+      this.plugin.state.batchRecoveryCorrupt
+      || (this.plugin.state.batchRecovery && this.plugin.state.batchRecovery.phase !== "completed")
+    ) {
+      const journal = this.plugin.state.batchRecovery;
+      const detail = this.plugin.state.batchRecoveryCorrupt
+        ? this.plugin.state.batchRecoveryQuarantine
+          ? "The saved batch recovery record is malformed, so the plugin cannot prove a rollback. A bounded JSON copy is quarantined in plugin data.json for manual inspection."
+          : "The saved batch recovery record is malformed and exceeded the safe quarantine bound, so the plugin cannot prove a rollback. Back up data.json before continuing."
+        : `Recovery is unresolved for ${journal?.entries.length ?? 0} notes: ${journal?.entries.map((entry) => `${entry.path} (${entry.state})`).join(", ") ?? "unknown"}`;
+      new Setting(containerEl)
+        .setName("Resolve batch recovery lock")
+        .setDesc(`${detail}${journal ? " First try the command \"Review and undo last vault batch\"." : ""} If you intentionally want to preserve every file exactly as it is now, you can discard the recovery proof and unlock future plugin writes.`)
+        .addButton((button) => button
+          .setButtonText("Keep current files and unlock")
+          .setWarning()
+          .setDisabled(this.plugin.isBatchRecoveryOperationActive())
+          .onClick(async () => {
+            if (this.plugin.isBatchRecoveryOperationActive()) {
+              new Notice("Wait for the active batch recovery operation to finish.");
+              return;
+            }
+            const expectedBatchId = this.plugin.state.batchRecovery?.id ?? null;
+            const expectedCorrupt = this.plugin.state.batchRecoveryCorrupt;
+            const accepted = await new ConfirmModal(
+              this.app,
+              "Keep the current vault state and abandon batch recovery?",
+              "This performs no note writes. It permanently discards the plugin's remaining batch rollback proof, including paths, hashes, and original replaced scopes. Inspect or back up the plugin data.json first if you may need manual recovery.",
+              "Abandon recovery and unlock",
+            ).waitForDecision();
+            if (!accepted) return;
+            const result = await this.plugin.clearRecoveryState({
+              expectedBatchId,
+              expectedCorrupt,
+              abandonUnresolved: true,
+              clearSingleCheckpoints: false,
+            });
+            new Notice(result.message);
+            if (result.ok) this.display();
+          }));
+    }
   }
 
   private renderCustomAgents(containerEl: HTMLElement): void {

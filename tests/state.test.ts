@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createAuditRecord } from "../src/core/audit";
+import { hashText } from "../src/core/scope";
 import {
   appendMessage,
   createMessage,
@@ -154,6 +155,61 @@ describe("thread isolation", () => {
     expect(hydrated.settings.wslDistribution).toBe("");
     expect(hydrated.settings.defaultAgent).toBe("default");
     expect(hydrated.settings.hermesEnabled).toBe(true);
+    expect(hydrated.settings.vaultBatchEnabled).toBe(false);
+    expect(hydrated.settings.vaultBatchMaxFiles).toBe(10);
+    expect(hydrated.settings.vaultBatchMaxTotalChars).toBe(200_000);
+  });
+
+  it("bounds experimental vault batch settings during hydration", () => {
+    const hydrated = hydrateData({
+      settings: {
+        vaultBatchEnabled: true,
+        vaultBatchMaxFiles: 999,
+        vaultBatchMaxTotalChars: 9_000_000,
+      },
+    });
+    expect(hydrated.settings.vaultBatchEnabled).toBe(true);
+    expect(hydrated.settings.vaultBatchMaxFiles).toBe(20);
+    expect(hydrated.settings.vaultBatchMaxTotalChars).toBe(500_000);
+  });
+
+  it("fails closed when persisted batch recovery metadata is malformed", () => {
+    const malformed = hydrateData({ batchRecovery: { schemaVersion: 999, entries: [] } });
+    expect(malformed.batchRecovery).toBeNull();
+    expect(malformed.batchRecoveryCorrupt).toBe(true);
+    expect(malformed.batchRecoveryQuarantine).toContain('"schemaVersion":999');
+
+    const persistedGate = hydrateData({ batchRecovery: null, batchRecoveryCorrupt: true });
+    expect(persistedGate.batchRecoveryCorrupt).toBe(true);
+  });
+
+  it("expires completed batch undo metadata without dropping unresolved proof", () => {
+    const timestamp = Date.now() - 8 * 24 * 60 * 60 * 1_000;
+    const recovery = {
+      schemaVersion: 1,
+      id: "batch-old",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      phase: "completed",
+      agentContextId: "default@0123456789abcdef",
+      entries: [{
+        path: "A.md",
+        scope: "body",
+        from: 0,
+        beforeScope: "before",
+        beforeFullHash: hashText("before"),
+        afterScopeLength: 5,
+        afterFullHash: hashText("after"),
+        state: "written",
+      }],
+    };
+    const completed = hydrateData({ batchRecovery: recovery });
+    expect(completed.batchRecovery).toBeNull();
+    expect(completed.batchRecoveryCorrupt).toBe(false);
+
+    const unresolved = hydrateData({ batchRecovery: { ...recovery, phase: "recovery_required" } });
+    expect(unresolved.batchRecovery?.phase).toBe("recovery_required");
+    expect(unresolved.batchRecoveryCorrupt).toBe(false);
   });
 
   it("retains only strictly validated custom ACP definitions", () => {

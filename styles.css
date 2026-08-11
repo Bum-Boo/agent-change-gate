@@ -230,8 +230,84 @@
   color: var(--text-error);
 }
 
+.agent-change-gate-audit-outcome.is-recovery_required {
+  color: var(--text-error);
+}
+
 .bounded-note-chat-warning {
   color: var(--text-warning);
+}
+
+.agent-change-gate-batch-modal {
+  width: min(92vw, 58rem);
+}
+
+.agent-change-gate-batch-instruction {
+  min-height: 7rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.agent-change-gate-batch-files {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.5rem 0 1rem;
+  max-height: 15rem;
+  overflow: auto;
+  padding: 0.45rem;
+}
+
+.agent-change-gate-batch-file {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+  padding: 0.25rem 0.35rem;
+}
+
+.agent-change-gate-batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  max-height: 55vh;
+  overflow: auto;
+}
+
+.agent-change-gate-batch-progress-item {
+  align-items: center;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.6rem 0.7rem;
+}
+
+.agent-change-gate-batch-progress-item > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-change-gate-batch-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-top: 0.2rem;
+}
+
+.agent-change-gate-batch-status.is-approved,
+.agent-change-gate-batch-status.is-applied {
+  color: var(--text-success);
+}
+
+.agent-change-gate-batch-status.is-blocked,
+.agent-change-gate-batch-status.is-failed,
+.agent-change-gate-batch-status.is-stale,
+.agent-change-gate-batch-status.is-recovery-required {
+  color: var(--text-error);
 }
 
 @media (max-width: 700px) {

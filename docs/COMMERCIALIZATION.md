@@ -8,7 +8,11 @@ Lead with one promise:
 
 > Not another vault-wide AI assistant. Agent Change Gate is the review-before-write ACP client for focused note edits.
 
-Hermes is the first-class setup path, not the whole category. The defensible value is the combination of durable note/agent threads, explicit scope receipts, bounded complete diffs, stale-response protection, and reversible host-side editing. Normal comparisons are exact; work-limit fallbacks are coarse but complete. The product must never imply that the separate agent process is OS-sandboxed.
+For the unreleased `0.3.0` branch, sharpen that promise rather than replacing it:
+
+> Not an unattended vault agent. Agent Change Gate is the review-before-write ACP client for one note or a bounded, user-selected batch.
+
+Hermes is the first-class setup path, not the whole category. The defensible value is the combination of durable note/agent threads, explicit scope receipts, bounded complete diffs, stale-response protection, and guarded host-side editing. Experimental batch work can extend that value only if each note stays isolated in a fresh no-history turn, every draft is separately reviewed, and the final write set is confirmed again. Normal comparisons are exact; work-limit fallbacks are coarse but complete. The product must never imply that the separate agent process is OS-sandboxed, that multi-file writes are atomic, or that best-effort rollback is guaranteed recovery.
 
 ## Suggested model
 
@@ -62,6 +66,24 @@ One sponsor is encouraging, not market validation. Three unrelated voluntary spo
 - [ ] Obsidian Community Plugins submission PR opened
 - [ ] Obsidian Community Plugins listing merged
 
+## Unreleased 0.3.0 batch gate
+
+- [x] Product boundary documented as experimental, opt-in, selected Markdown batch review rather than unattended vault automation
+- [ ] Runtime and tests enforce the public hard limits of 20 files and 500,000 selected-scope characters
+- [ ] One fresh ACP turn per selected note with no conversation history verified in the host flow
+- [ ] Separate bounded diff review for every draft and a final batch confirmation verified in the host flow
+- [ ] File creation, deletion, move, rename, and non-Markdown writes proven unreachable through the batch host path
+- [ ] Automated integration tests prove no write begins when any approved target is stale
+- [ ] Automated integration tests cover partial apply, interrupted-run reconciliation, and guarded best-effort rollback
+- [ ] Manual Obsidian GUI test covers selection, cost/context preflight, stop, per-draft review, final confirmation, stale-all block, partial results, and recovery
+- [ ] Real-model batch run verified against the exact supported Hermes version
+- [ ] Batch run verified against at least one additional ACP implementation
+- [ ] Privacy and recovery-state deletion controls verified in a packaged build
+- [ ] Independent review of the multi-file write and recovery path
+- [ ] GitHub prerelease `0.3.0` published and downloaded assets verified
+
+Do not describe `0.3.0` as released, production-ready, transactional, or Community Plugins-distributed until the applicable gates above are complete.
+
 ## Post-beta monetization gate
 
 - [ ] Retention evidence above has been collected from at least ten external beta users
@@ -78,6 +100,9 @@ Track only aggregate, manually reported outcomes; do not add telemetry by defaul
 - first reviewed edit applied;
 - edits discarded because the scope was wrong;
 - stale edits correctly blocked;
+- selected batch size and time to review all drafts;
+- batch drafts approved versus rejected after review;
+- partial or interrupted batches and whether guarded recovery completed without overwriting later user changes;
 - weekly users who return to the same note thread;
 - sponsor conversion after repeated use.
 

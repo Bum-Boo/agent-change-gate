@@ -2,9 +2,9 @@
 export class SerialTaskQueue {
   private tail: Promise<void> = Promise.resolve();
 
-  enqueue(task: () => Promise<void>): Promise<void> {
+  enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = this.tail.then(task);
-    this.tail = run.catch(() => undefined);
+    this.tail = run.then(() => undefined, () => undefined);
     return run;
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "agent-change-gate",
-  "version": "0.2.0",
-  "description": "Hermes-first ACP chat with scope-checked, review-before-write note changes for Obsidian.",
+  "version": "0.3.0",
+  "description": "Hermes-first ACP chat with scope-checked, review-before-write single-note and bounded batch changes for Obsidian.",
   "private": true,
   "author": "Bum-Boo",
   "license": "MIT",

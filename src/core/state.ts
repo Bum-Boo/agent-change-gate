@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { hydrateAuditRecords, pruneAuditRecords } from "./audit";
+import { hydrateBatchRecoveryJournal } from "./batch-recovery";
 import type {
   BoundedNoteChatSettings,
   ChatMessage,
@@ -21,6 +22,18 @@ export const MAX_CHECKPOINT_CHARS = 600_000;
 export const MAX_TOTAL_CHECKPOINT_CHARS = 3_000_000;
 export const MAX_CHECKPOINT_LINES = 4_000;
 const MAX_MESSAGE_CHARS = 24_000;
+const MAX_BATCH_RECOVERY_QUARANTINE_CHARS = 4_000_000;
+
+function quarantineRecoveryValue(value: unknown): string | null {
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string" && serialized.length <= MAX_BATCH_RECOVERY_QUARANTINE_CHARS
+      ? serialized
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 export function createMessage(
   role: ChatRole,
@@ -52,6 +65,9 @@ export function emptyData(): PersistedData {
     threads: {},
     checkpoints: {},
     auditLog: [],
+    batchRecovery: null,
+    batchRecoveryCorrupt: false,
+    batchRecoveryQuarantine: null,
   };
 }
 
@@ -90,6 +106,16 @@ function cleanSettings(input: unknown): BoundedNoteChatSettings {
     promptTimeoutMs: clampNumber(record.promptTimeoutMs, 15_000, 600_000, DEFAULT_SETTINGS.promptTimeoutMs),
     maxContextChars: clampNumber(record.maxContextChars, 2_000, 300_000, DEFAULT_SETTINGS.maxContextChars),
     historyLimit: clampNumber(record.historyLimit, 4, 100, DEFAULT_SETTINGS.historyLimit),
+    vaultBatchEnabled: typeof record.vaultBatchEnabled === "boolean"
+      ? record.vaultBatchEnabled
+      : DEFAULT_SETTINGS.vaultBatchEnabled,
+    vaultBatchMaxFiles: clampNumber(record.vaultBatchMaxFiles, 1, 20, DEFAULT_SETTINGS.vaultBatchMaxFiles),
+    vaultBatchMaxTotalChars: clampNumber(
+      record.vaultBatchMaxTotalChars,
+      10_000,
+      500_000,
+      DEFAULT_SETTINGS.vaultBatchMaxTotalChars,
+    ),
   };
 }
 
@@ -105,6 +131,24 @@ export function hydrateData(input: unknown): PersistedData {
   const record = input as Partial<PersistedData>;
   data.settings = cleanSettings(record.settings);
   data.auditLog = hydrateAuditRecords(record.auditLog);
+  const hydratedBatchRecovery = hydrateBatchRecoveryJournal(record.batchRecovery);
+  const retainedExpiredBatchRecovery = hydratedBatchRecovery
+    ?? hydrateBatchRecoveryJournal(record.batchRecovery, Date.now(), true);
+  data.batchRecovery = hydratedBatchRecovery;
+  data.batchRecoveryCorrupt = record.batchRecoveryCorrupt === true || Boolean(
+    record.batchRecovery !== undefined
+    && record.batchRecovery !== null
+    && !hydratedBatchRecovery
+    && retainedExpiredBatchRecovery?.phase !== "completed"
+  );
+  data.batchRecoveryQuarantine = typeof record.batchRecoveryQuarantine === "string"
+    && record.batchRecoveryQuarantine.length <= MAX_BATCH_RECOVERY_QUARANTINE_CHARS
+    ? record.batchRecoveryQuarantine
+    : null;
+  if (data.batchRecoveryCorrupt && !data.batchRecoveryQuarantine && record.batchRecovery != null) {
+    data.batchRecoveryQuarantine = quarantineRecoveryValue(record.batchRecovery);
+  }
+  if (!data.batchRecoveryCorrupt) data.batchRecoveryQuarantine = null;
   if (record.threads && typeof record.threads === "object") {
     for (const key of Object.keys(record.threads).slice(0, 1_000)) {
       const value = record.threads[key];
@@ -266,6 +310,16 @@ export function prunePersistedState(data: PersistedData, now = Date.now()): void
   pruneThreads(data, now);
   pruneCheckpoints(data, now);
   pruneAuditRecords(data.auditLog, now);
+  if (data.batchRecovery && !hydrateBatchRecoveryJournal(data.batchRecovery, now)) {
+    const retainedExpired = hydrateBatchRecoveryJournal(data.batchRecovery, now, true);
+    if (retainedExpired?.phase === "completed") {
+      data.batchRecovery = null;
+    } else {
+      data.batchRecoveryQuarantine = quarantineRecoveryValue(data.batchRecovery);
+      data.batchRecovery = null;
+      data.batchRecoveryCorrupt = true;
+    }
+  }
 }
 
 export function getOrCreateThread(

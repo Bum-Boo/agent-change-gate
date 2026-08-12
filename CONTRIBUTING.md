@@ -2,7 +2,7 @@
 
 ## Local checks
 
-Use Node 20, 22, or 24.
+Use Node 20.19.0+, 22.12.0+, or 24+ (even-numbered supported release lines only).
 
 ```bash
 npm ci

@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { SerialTaskQueue } from "../src/core/serial-task-queue";
 
 describe("SerialTaskQueue", () => {
+  it("returns each queued task result", async () => {
+    const queue = new SerialTaskQueue();
+    await expect(queue.enqueue(async () => 42)).resolves.toBe(42);
+  });
+
   it("does not let a later write finish ahead of an earlier write", async () => {
     const queue = new SerialTaskQueue();
     const events: string[] = [];

@@ -1,7 +1,7 @@
 {
   "name": "agent-change-gate",
-  "version": "0.2.0",
-  "description": "Hermes-first ACP chat with scope-checked, review-before-write note changes for Obsidian.",
+  "version": "0.3.0",
+  "description": "Hermes-first ACP chat with scope-checked, review-before-write single-note and bounded batch changes for Obsidian.",
   "private": true,
   "author": "Bum-Boo",
   "license": "MIT",
@@ -28,8 +28,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke:acp": "node scripts/smoke-acp.mjs",
+    "validate:docs": "node scripts/validate-doc-links.mjs",
+    "validate:public-release-script": "node --check scripts/validate-public-release.mjs",
+    "validate:public-release": "node scripts/validate-public-release.mjs",
     "validate:release": "node scripts/validate-release.mjs",
-    "check": "npm run typecheck && npm run test && npm run build && npm run validate:release",
+    "check": "npm run typecheck && npm run test && npm run build && npm run validate:release && npm run validate:docs && npm run validate:public-release-script",
     "deploy:lab": "npm run build && node scripts/deploy-lab.mjs",
     "package": "npm run build && node scripts/package-release.mjs"
   },
@@ -44,6 +47,6 @@
     "vitest": "4.1.10"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
   }
 }

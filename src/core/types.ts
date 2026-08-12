@@ -1,4 +1,5 @@
 import type { ScopeAuditRecord } from "./audit";
+import type { BatchRecoveryJournal } from "./batch-recovery";
 
 export type LaunchMode = "auto" | "wsl" | "native";
 export type AcpTransport = "wsl" | "native";
@@ -37,6 +38,9 @@ export interface BoundedNoteChatSettings {
   promptTimeoutMs: number;
   maxContextChars: number;
   historyLimit: number;
+  vaultBatchEnabled: boolean;
+  vaultBatchMaxFiles: number;
+  vaultBatchMaxTotalChars: number;
 }
 
 export const DEFAULT_SETTINGS: BoundedNoteChatSettings = {
@@ -51,6 +55,9 @@ export const DEFAULT_SETTINGS: BoundedNoteChatSettings = {
   promptTimeoutMs: 120_000,
   maxContextChars: 120_000,
   historyLimit: 40,
+  vaultBatchEnabled: false,
+  vaultBatchMaxFiles: 10,
+  vaultBatchMaxTotalChars: 200_000,
 };
 
 export interface AgentProfile {
@@ -95,6 +102,10 @@ export interface PersistedData {
   threads: Record<string, ChatThread>;
   checkpoints: Record<string, EditCheckpoint>;
   auditLog: ScopeAuditRecord[];
+  batchRecovery: BatchRecoveryJournal | null;
+  batchRecoveryCorrupt: boolean;
+  /** Bounded JSON copy of a malformed recovery record, retained for manual inspection. */
+  batchRecoveryQuarantine: string | null;
 }
 
 export interface ScopeSnapshot {
@@ -134,6 +145,7 @@ export interface ReplacementValidation {
 export interface AgentDiagnostics {
   ok: boolean;
   message: string;
+  stage?: "discovery" | "initialization";
   executable?: string;
   transport?: AcpTransport;
   profiles?: string[];

@@ -1,9 +1,29 @@
 name: ACP compatibility report
-description: Report a successful or failed launch with a specific ACP agent version.
+description: Report a metadata-only ACP compatibility result without vault content or raw logs.
 title: "[Compatibility]: "
 labels:
   - compatibility
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Test in a disposable vault or verified copy. Never include prompts, note text, model output, credentials, absolute paths, launch commands, or raw logs.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safe report confirmation
+      options:
+        - label: I used synthetic content and removed identifying or sensitive data.
+          required: true
+        - label: This is not a security vulnerability report.
+          required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: 0.2.0 or an exact 0.3.x prerelease
+    validations:
+      required: true
   - type: input
     id: agent
     attributes:
@@ -12,28 +32,41 @@ body:
     validations:
       required: true
   - type: input
-    id: transport
+    id: host
     attributes:
-      label: Transport and operating system
-      placeholder: WSL on Windows 11
+      label: Obsidian, transport, and operating-system versions
+      placeholder: Obsidian 1.13.6; WSL stdio on Windows 11
     validations:
       required: true
-  - type: dropdown
-    id: result
+  - type: checkboxes
+    id: completed
     attributes:
-      label: Result
+      label: Completed flows
       options:
-        - Initialization succeeded
-        - Initialization failed
-        - Full ask flow succeeded
-        - Full edit/review/apply flow succeeded
-        - Full flow failed
+        - label: ACP initialization
+        - label: Scope-only Ask
+        - label: Complete diff review and explicit apply or discard
+        - label: Intentional stale proposal safely blocked
+        - label: Cancellation
+        - label: Guarded single-note undo
+        - label: Experimental batch review (only if invited after its safety gate)
+        - label: Batch stale-all preflight blocked every write
+        - label: Batch partial-failure result reported each selected path
+        - label: Guarded batch recovery or undo did not overwrite later changes
+  - type: dropdown
+    id: overall-result
+    attributes:
+      label: Overall result
+      options:
+        - Verified flows succeeded
+        - Partially compatible
+        - Initialization blocked
+        - Turn or reply blocked
+        - Write or recovery safety check blocked
     validations:
       required: true
   - type: textarea
     id: details
     attributes:
-      label: Redacted details
-      description: Include synthetic reproduction information only; never paste prompts, note text, keys, or provider output.
-    validations:
-      required: true
+      label: Optional metadata-only details
+      description: Diagnostic codes and coarse counts only; never paste content, paths, commands, or raw errors.

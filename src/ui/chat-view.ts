@@ -12,6 +12,7 @@ import {
   updateAuditOutcome,
 } from "../core/audit";
 import { agentContextId } from "../core/agent-identity";
+import { classifyAcpError } from "../core/errors";
 import { buildAgentPrompt, historyForPrompt, parseAgentReply } from "../core/protocol";
 import { instructionError, shouldSubmitComposer } from "../core/input";
 import {
@@ -131,6 +132,7 @@ export class BoundedNoteChatView extends ItemView {
       this.plugin.state.settings.defaultAgent = this.selectedAgent;
       void this.plugin.saveState();
       this.renderMessages(notePath);
+      this.renderPayloadPreview();
     });
 
     const taskSelect = toolbar.createEl("select", { attr: { "aria-label": "Task" } });
@@ -144,6 +146,7 @@ export class BoundedNoteChatView extends ItemView {
     }
     taskSelect.addEventListener("change", () => {
       this.task = taskSelect.value === "edit" ? "edit" : "ask";
+      this.renderPayloadPreview();
     });
 
     const scopeSelect = toolbar.createEl("select", { attr: { "aria-label": "Note scope" } });
@@ -160,6 +163,7 @@ export class BoundedNoteChatView extends ItemView {
     scopeSelect.addEventListener("change", () => {
       const value = scopeSelect.value;
       this.noteScope = value === "selection" || value === "frontmatter" ? value : "body";
+      this.renderPayloadPreview();
     });
 
     const historySelect = toolbar.createEl("select", { attr: { "aria-label": "Agent conversation context" } });
@@ -173,6 +177,7 @@ export class BoundedNoteChatView extends ItemView {
     }
     historySelect.addEventListener("change", () => {
       this.includeHistory = historySelect.value === "same-scope";
+      this.renderPayloadPreview();
     });
 
     const boundary = root.createDiv({ cls: "bounded-note-chat-boundary" });
@@ -184,9 +189,17 @@ export class BoundedNoteChatView extends ItemView {
     root.createDiv({ cls: "bounded-note-chat-note", text: notePath });
     this.receiptEl = root.createDiv({
       cls: "bounded-note-chat-scope-receipt",
-      text: "The scope is captured only when you send.",
+      attr: { role: "status", "aria-live": "polite" },
     });
-    this.messagesEl = root.createDiv({ cls: "bounded-note-chat-messages" });
+    this.messagesEl = root.createDiv({
+      cls: "bounded-note-chat-messages",
+      attr: {
+        role: "log",
+        "aria-live": "polite",
+        "aria-label": "Agent Change Gate conversation",
+        "aria-relevant": "additions text",
+      },
+    });
     this.renderMessages(notePath);
 
     const composer = root.createDiv({ cls: "bounded-note-chat-composer" });
@@ -215,8 +228,12 @@ export class BoundedNoteChatView extends ItemView {
     this.clearButton = new ButtonComponent(actions)
       .setButtonText("Clear thread")
       .onClick(() => void this.clearThread());
-    this.statusEl = actions.createEl("span", { cls: "bounded-note-chat-note" });
+    this.statusEl = actions.createEl("span", {
+      cls: "bounded-note-chat-note",
+      attr: { role: "status", "aria-live": "polite" },
+    });
     this.updateBusyState();
+    this.renderPayloadPreview();
   }
 
   private renderMessages(notePath: string): void {
@@ -232,11 +249,22 @@ export class BoundedNoteChatView extends ItemView {
         });
       } else {
         const onboarding = container.createDiv({ cls: "bounded-note-chat-onboarding" });
-        onboarding.createEl("strong", { text: "Connect an ACP agent" });
+        onboarding.createEl("strong", { text: "Connect an ACP agent in three steps" });
         onboarding.createEl("p", {
-          text: "Hermes profiles are detected automatically. Other ACP agents can be added in plugin settings with a literal executable and argument list.",
+          text: "Hermes profiles are detected automatically. Other ACP agents can be added explicitly without giving this plugin a shell command.",
         });
-        new ButtonComponent(onboarding)
+        const steps = onboarding.createEl("ol", { cls: "agent-change-gate-onboarding-steps" });
+        steps.createEl("li", { text: "Detect Hermes or add one compatible ACP profile." });
+        steps.createEl("li", { text: "Run the initialization check in plugin settings." });
+        steps.createEl("li", { text: "Open a Markdown note and send only the scope you choose." });
+        const diagnostic = this.safeAgentDiagnostic();
+        onboarding.createDiv({
+          cls: "agent-change-gate-onboarding-diagnostic",
+          attr: { role: "status", "aria-live": "polite" },
+          text: diagnostic,
+        });
+        const actions = onboarding.createDiv({ cls: "agent-change-gate-onboarding-actions" });
+        new ButtonComponent(actions)
           .setButtonText("Detect agents")
           .setCta()
           .onClick(async () => {
@@ -246,6 +274,12 @@ export class BoundedNoteChatView extends ItemView {
               new Notice(error instanceof Error ? error.message : "Agent discovery failed.");
             }
           });
+        new ButtonComponent(actions)
+          .setButtonText("Open settings")
+          .onClick(() => this.plugin.openSettings());
+        new ButtonComponent(actions)
+          .setButtonText("Copy safe diagnostics")
+          .onClick(() => void this.copySafeDiagnostics());
       }
       return;
     }
@@ -468,9 +502,10 @@ export class BoundedNoteChatView extends ItemView {
         return;
       }
       const cancelled = this.cancelRequested || error instanceof AcpTurnCancelledError;
+      const safeError = classifyAcpError(error, { phase: "turn" });
       const message = cancelled
         ? "Request cancelled. No proposal was applied."
-        : "Request failed before any proposal was applied.";
+        : `${safeError.category} (${safeError.diagnosticCode}). ${safeError.nextAction} No proposal was applied.`;
       appendMessage(
         thread,
         createMessage("system", message, snapshot.scope, scopeKey),
@@ -488,7 +523,80 @@ export class BoundedNoteChatView extends ItemView {
       this.cancelRequested = false;
       this.busy = false;
       this.updateBusyState();
-      if (!this.closed) this.render();
+      if (!this.closed) {
+        this.render();
+        this.instructionEl?.focus();
+      }
+    }
+  }
+
+  private renderPayloadPreview(): void {
+    const receipt = this.receiptEl;
+    if (!receipt) return;
+    const view = this.plugin.getActiveMarkdownView();
+    const file = view?.file;
+    if (!view || !file || file.extension !== "md") {
+      receipt.setText("Open a Markdown note to preview the payload. No note content has been sent.");
+      return;
+    }
+    try {
+      const editor = view.editor;
+      const snapshot = captureScope(file.path, editor.getValue(), this.noteScope, {
+        from: editor.posToOffset(editor.getCursor("from")),
+        to: editor.posToOffset(editor.getCursor("to")),
+      });
+      const profile = this.plugin.agents.find((item) => item.id === this.selectedAgent);
+      const contextId = profile ? agentContextId(profile) : "";
+      const existingThread = contextId
+        ? this.plugin.state.threads[threadKey(contextId, file.path)]
+        : undefined;
+      const key = scopeContextKey(snapshot);
+      const historyChars = this.includeHistory
+        ? historyForPrompt((existingThread?.messages ?? []).filter((message) => (
+            message.scope === snapshot.scope && message.scopeKey === key
+          ))).reduce((total, message) => total + message.text.length, 0)
+        : 0;
+      receipt.setText(
+        `Ready to send: ${snapshot.scope} from ${file.path} · ${snapshot.originalScope.length.toLocaleString()} scope chars`
+        + (historyChars > 0 ? ` + ${historyChars.toLocaleString()} exact-scope history chars` : " · no history")
+        + ". No content has been sent yet.",
+      );
+    } catch (error) {
+      receipt.setText(error instanceof Error
+        ? `Payload unavailable: ${error.message} No content has been sent.`
+        : "Payload unavailable. No content has been sent.");
+    }
+  }
+
+  private safeAgentDiagnostic(): string {
+    if (!this.plugin.diagnostics) {
+      return "Connection not checked. Detect agents, then run the initialization check in plugin settings.";
+    }
+    if (this.plugin.diagnostics?.ok && this.plugin.diagnostics.stage === "initialization") {
+      return `Connection ready: ${this.plugin.diagnostics.message}`;
+    }
+    if (this.plugin.diagnostics?.ok) {
+      return `Discovery ready: ${this.plugin.agents.length.toLocaleString()} profile${this.plugin.agents.length === 1 ? "" : "s"} found. Run the initialization check before the first request.`;
+    }
+    const safe = classifyAcpError(this.plugin.diagnostics?.message ?? "Agent discovery has not completed.", {
+      phase: "launch",
+    });
+    return `${safe.category} (${safe.diagnosticCode}). ${safe.nextAction}`;
+  }
+
+  private async copySafeDiagnostics(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText([
+        "Agent Change Gate diagnostics",
+        `Plugin version: ${this.plugin.manifest.version}`,
+        `Obsidian version: ${(this.app as typeof this.app & { version?: string }).version ?? "not reported"}`,
+        `Ready ACP profiles: ${this.plugin.agents.length}`,
+        this.safeAgentDiagnostic(),
+        "This report intentionally excludes note text, paths, commands, arguments, and raw agent errors.",
+      ].join("\n"));
+      new Notice("Safe diagnostics copied.");
+    } catch {
+      new Notice("Safe diagnostics could not be copied.");
     }
   }
 

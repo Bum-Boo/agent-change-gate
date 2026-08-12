@@ -1,10 +1,10 @@
 # Privacy
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 ## Summary
 
-Agent Change Gate has no analytics, advertising, telemetry, user account, or direct HTTP client. It communicates with a locally installed ACP agent over stdio. Hermes has first-class discovery; users may also configure another compatible ACP process.
+Agent Change Gate has no analytics, advertising, telemetry, user account, or direct HTTP client. It communicates with a locally installed ACP agent over stdio. Hermes has first-class discovery; users may also configure another compatible ACP process. The unreleased `0.3.0` development branch includes an experimental, opt-in batch review mode for an explicitly selected and bounded set of Markdown notes.
 
 ## Data sent to the selected ACP agent
 
@@ -16,6 +16,8 @@ Each turn includes:
 - the requested task and scope labels.
 
 Conversation context is off by default. If the user selects **Context: exact-scope thread**, the turn also includes up to 12 recent visible user/assistant messages, each truncated to 4,000 characters, from the same agent, note, and captured scope identity (scope type, range, and content hash). Those messages contain earlier instructions and replies and may quote note content from that same captured scope.
+
+Experimental Vault Batch Review does not use that conversation context. A batch is limited to at most 20 explicitly selected Markdown notes and 500,000 selected-scope characters. It starts one fresh ACP turn per note and sends only that note's logical path, selected body or existing frontmatter text, the batch instruction, and task/scope labels. It does not combine the selected notes into one host prompt. A batch therefore creates multiple agent/model turns, which may increase provider processing, retention exposure, and charges.
 
 ACP initialization sends the plugin client name, title, version, protocol version, and an empty client-capabilities object. Starting a turn asks the agent to create a fresh session with an absolute temporary or user-configured working directory and an empty MCP-server list; the agent returns the session ID used for that turn. An absolute working directory can reveal operating-system path components such as a username. The plugin does not intentionally configure the vault path as that directory, but its lexical guard is not a symlink-aware sandbox.
 
@@ -32,17 +34,19 @@ Obsidian stores plugin state in `.obsidian/plugins/agent-change-gate/data.json`.
 - plaintext launch settings that users are warned must not contain secrets;
 - 4 to 100 configured chat messages per agent-launch-identity/note thread, with at most 24,000 characters in any hydrated message;
 - full-note before/after recovery snapshots for eligible applied edits, even when the sent scope was only a selection or frontmatter;
+- one bounded batch recovery journal containing selected note paths, the original replaced-scope plaintext, scope ranges, before/after full-note hashes, and per-file apply/recovery state needed to reconcile an interrupted apply; the journal intentionally stores neither full-note copies nor replacement text;
+- when that journal is malformed, a bounded JSON quarantine copy of the damaged record (up to 4,000,000 characters) so the user can inspect or back it up before explicitly abandoning recovery;
 - up to 500 scope receipts without instruction, note-body, or model-response plaintext, retained for 90 days.
 
-`data.json` is ordinary plaintext JSON; chats and full-note recovery snapshots are not encrypted by this plugin. Depending on vault settings, Obsidian Sync, Dropbox, OneDrive, backup software, or another synchronization tool may copy plugin data off-device. “Local storage” here means plugin-owned storage, not a guarantee that the file remains on one device.
+`data.json` is ordinary plaintext JSON; chats, the batch recovery journal, its malformed-record quarantine, and full-note single-edit recovery snapshots are not encrypted by this plugin. Depending on vault settings, Obsidian Sync, Dropbox, OneDrive, backup software, or another synchronization tool may copy plugin data off-device. “Local storage” here means plugin-owned storage, not a guarantee that the file remains on one device.
 
-Chat storage is automatically pruned on save to at most 200 threads, 2,000,000 message characters in total, and 180 days of retention. Recovery storage is limited to 20 snapshots, 3,000,000 characters in total, 600,000 combined before/after characters and 4,000 combined logical lines per snapshot, and 30 days of retention. An oversized edit can be applied after review but receives no plugin recovery snapshot.
+Chat storage is automatically pruned on save to at most 200 threads, 2,000,000 message characters in total, and 180 days of retention. Single-edit recovery storage is limited to 20 snapshots, 3,000,000 characters in total, 600,000 combined before/after characters and 4,000 combined logical lines per snapshot, and 30 days of retention. The separate batch recovery journal is limited to 20 entries, 300,000 original-scope characters per entry, and 1,000,000 original-scope characters in total. A completed batch undo journal expires after seven days; unresolved or malformed recovery state remains fail-closed until recovery succeeds or the user explicitly chooses to keep the current files and discard the remaining proof. Single-note oversized edits can be applied after review without a plugin recovery snapshot; batch apply requires bounded recovery preparation before writing. A batch is additionally bounded to 20 files and 500,000 selected-scope characters. These limits constrain plugin-owned storage and model context but do not constrain copies retained by the selected agent or provider.
 
-Scope receipts contain the agent profile ID plus a non-secret launch fingerprint, vault-relative note path, task, scope, scope character count and SHA-256 hash, optional-history character count and SHA-256 hash, timestamps, and outcome. They do not contain the instruction, note text, or model reply. SHA-256 values are deterministic fingerprints, not anonymization: someone who can guess low-entropy content can test that guess against a stored hash. Users can separately clear chat history, recovery snapshots, and scope receipts from plugin settings. Uninstalling the plugin directory removes its local state if `data.json` is removed with it.
+Scope receipts contain the agent profile ID plus a non-secret launch fingerprint, vault-relative note path, task, scope, scope character count and SHA-256 hash, optional-history character count and SHA-256 hash, timestamps, and outcome. Each sent batch note has its own receipt under the same plaintext exclusions. Receipts do not contain the instruction, note text, replacement, or model reply. SHA-256 values are deterministic fingerprints, not anonymization: someone who can guess low-entropy content can test that guess against a stored hash. Users can separately clear chat history, recovery state, and scope receipts from plugin settings. Uninstalling the plugin directory removes its local state if `data.json` is removed with it.
 
 ## Agent-side storage
 
-An ACP agent may persist sessions, prompts, provider responses, memory, or logs under its own directories. The plugin creates a fresh ACP session for each turn. It requests agent-side close when that capability is advertised; otherwise it restarts the child after active turns finish. This bounds the plugin-managed process lifecycle but does not prove that the agent deleted provider-side or durable records. The plugin does not store ACP session IDs in `data.json` and cannot delete agent-side records. Use the agent's own management tools and retention policy for that data.
+An ACP agent may persist sessions, prompts, provider responses, memory, or logs under its own directories. The plugin creates a fresh ACP session for each turn, including every note in a batch, and sends no prior conversation history in batch prompts. It requests agent-side close when that capability is advertised; otherwise it restarts the child after active turns finish. This bounds the plugin-managed session lifecycle but does not prove that the process, agent, provider, or model forgot earlier turns. The plugin does not store ACP session IDs in `data.json` and cannot delete agent-side records. Use the agent's own management tools and retention policy for that data.
 
 ## Processes and network
 
@@ -50,7 +54,7 @@ Hermes discovery may run `wsl.exe` checks (`printenv`, `which`), an executable v
 
 Children receive a restricted allowlist of operating-system environment fields needed for process launch, locale, and path resolution, plus fixed encoding/color flags and the documented Hermes-specific fields. Values such as `HOME`, `USERPROFILE`, temporary paths, and `PATH` can reveal local path or username metadata to the child. Provider credentials are expected to be managed by the agent itself and cannot be entered through a custom environment field in this plugin. Custom argv is stored locally, so users must not place secrets in arguments.
 
-No telemetry or update check is performed by the plugin. Any network activity comes from the chosen agent and its configured provider or built-in behavior.
+No telemetry or update check is performed by the plugin. Any network activity comes from the chosen agent and its configured provider or built-in behavior. A batch starts one agent turn per selected note, so users should review the displayed file, character, and turn counts before confirming draft generation.
 
 ## Changes
 

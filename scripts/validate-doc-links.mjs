@@ -82,7 +82,6 @@ for (const file of files) {
       continue;
     }
     try {
-      await stat(resolved);
       const extension = path.extname(resolved).toLowerCase();
       if (!checkedImages.has(resolved) && [".jpg", ".jpeg", ".png"].includes(extension)) {
         checkedImages.add(resolved);
@@ -93,6 +92,8 @@ for (const file of files) {
         if ((extension === ".png" && !isPng) || ([".jpg", ".jpeg"].includes(extension) && !isJpeg)) {
           failures.push(`${path.relative(root, resolved)} has content that does not match its image extension`);
         }
+      } else {
+        await stat(resolved);
       }
     } catch {
       failures.push(`${path.relative(root, file)} -> ${raw} does not exist`);

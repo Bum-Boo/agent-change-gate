@@ -40,6 +40,10 @@ const changelog = contents.get("CHANGELOG.md") ?? "";
 if (!new RegExp(`^## ${escapedVersion} - \\d{4}-\\d{2}-\\d{2}$`, "mu").test(changelog)) {
   failures.push(`CHANGELOG.md has no dated ${version} release heading.`);
 }
+const security = contents.get("SECURITY.md") ?? "";
+if (!new RegExp(`^\\|\\s*\\x60?${escapedVersion}\\x60?\\s*\\|\\s*Yes\\s*\\|$`, "mu").test(security)) {
+  failures.push(`SECURITY.md does not list ${version} as a supported version.`);
+}
 
 if (failures.length > 0) {
   throw new Error(`Public release truth gate failed:\n${failures.join("\n")}`);

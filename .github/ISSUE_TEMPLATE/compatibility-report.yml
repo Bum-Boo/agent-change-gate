@@ -70,5 +70,3 @@ body:
     attributes:
       label: Optional metadata-only details
       description: Diagnostic codes and coarse counts only; never paste content, paths, commands, or raw errors.
-    validations:
-      required: true

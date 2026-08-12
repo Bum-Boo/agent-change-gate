@@ -19,6 +19,7 @@ import {
   validateBatchProposals,
 } from "./core/batch";
 import { agentContextId } from "./core/agent-identity";
+import { classifyAcpError } from "./core/errors";
 import { emptyData, hydrateData, prunePersistedState } from "./core/state";
 import { isWorkspaceOutsideVault } from "./core/path-safety";
 import { KeyedTaskQueue } from "./core/keyed-task-queue";
@@ -95,7 +96,7 @@ export default class BoundedNoteChatPlugin extends Plugin {
         if (!this.state.batchRecovery) return false;
         if (!checking) {
           void this.undoVaultBatch().catch((error) => {
-            new Notice(error instanceof Error ? error.message : "Batch undo failed before it could finish.");
+            new Notice("Batch undo failed before it could finish. No additional plugin write was started.");
           });
         }
         return true;
@@ -107,12 +108,14 @@ export default class BoundedNoteChatPlugin extends Plugin {
 
     this.app.workspace.onLayoutReady(() => {
       void this.reconcileInterruptedBatch().catch((error) => {
-        new Notice(error instanceof Error ? error.message : "Batch recovery reconciliation failed.", 10_000);
+        new Notice("Batch recovery reconciliation failed. Plugin writes remain blocked until recovery is resolved in settings.", 10_000);
       });
       void this.refreshAgents(false).catch((error) => {
+        const safeError = classifyAcpError(error, { phase: "launch" });
         this.diagnostics = {
           ok: false,
-          message: error instanceof Error ? error.message : "ACP agent discovery failed.",
+          stage: "discovery",
+          message: `${safeError.category} (${safeError.diagnosticCode}). ${safeError.nextAction}`,
         };
         this.refreshChatViews();
       });
@@ -215,6 +218,18 @@ export default class BoundedNoteChatPlugin extends Plugin {
     return this.batchRecoveryBusy;
   }
 
+  openSettings(): void {
+    const setting = (this.app as typeof this.app & {
+      setting?: { open(): void; openTabById(id: string): void };
+    }).setting;
+    if (!setting) {
+      new Notice("Open Settings, then choose Agent Change Gate.");
+      return;
+    }
+    setting.open();
+    setting.openTabById(this.manifest.id);
+  }
+
   isBatchFileOpen(notePath: string): boolean {
     return this.app.workspace.getLeavesOfType("markdown").some((leaf) => (
       leaf.view instanceof MarkdownView && leaf.view.file?.path === notePath
@@ -231,6 +246,7 @@ export default class BoundedNoteChatPlugin extends Plugin {
   async applyVaultBatch(
     batchId: string,
     profileId: string,
+    expectedAgentContextId: string,
     edits: ApprovedVaultBatchEdit[],
   ): Promise<{
     outcomes: Map<string, "applied" | "stale" | "rolled-back" | "recovery-required" | "not-applied">;
@@ -239,7 +255,7 @@ export default class BoundedNoteChatPlugin extends Plugin {
     return await this.runBatchMutation(async () => {
       const outcomes = new Map<string, "applied" | "stale" | "rolled-back" | "recovery-required" | "not-applied">();
       const profile = this.agents.find((item) => item.id === profileId);
-      if (!profile) {
+      if (!profile || agentContextId(profile) !== expectedAgentContextId) {
         for (const edit of edits) outcomes.set(edit.snapshot.notePath, "not-applied");
         return { outcomes, message: "The selected ACP profile changed. No batch write started." };
       }
@@ -256,7 +272,10 @@ export default class BoundedNoteChatPlugin extends Plugin {
           maxFiles: this.state.settings.vaultBatchMaxFiles,
           maxProposals: this.state.settings.vaultBatchMaxFiles,
           maxFileCharacters: Math.min(120_000, this.state.settings.maxContextChars),
-          maxTotalCharacters: MAX_BATCH_TOTAL_CHARACTERS,
+          maxTotalCharacters: Math.min(
+            MAX_BATCH_TOTAL_CHARACTERS,
+            this.state.settings.vaultBatchMaxTotalChars,
+          ),
         },
       );
       if (!proposalValidation.ok) {
@@ -278,16 +297,16 @@ export default class BoundedNoteChatPlugin extends Plugin {
         for (const edit of edits) outcomes.set(edit.snapshot.notePath, "not-applied");
         return {
           outcomes,
-          message: error instanceof Error ? `${error.message} No write started.` : "A target could not be re-read. No write started.",
+          message: "A selected target could not be safely re-read. Close every selected Markdown view, verify the notes still exist, and try again. No write started.",
         };
       }
       const preflight = preflightBatchTransaction(proposalValidation.proposals, currentFiles);
       if (!preflight.ok) {
-        const stalePaths = new Set(preflight.stale.map((item) => item.path.toLocaleLowerCase()));
+        const stalePaths = new Set(preflight.stale.map((item) => item.path.toLowerCase()));
         for (const edit of edits) {
           outcomes.set(
             edit.snapshot.notePath,
-            stalePaths.has(edit.snapshot.notePath.toLocaleLowerCase()) ? "stale" : "not-applied",
+            stalePaths.has(edit.snapshot.notePath.toLowerCase()) ? "stale" : "not-applied",
           );
         }
         return {
@@ -340,6 +359,7 @@ export default class BoundedNoteChatPlugin extends Plugin {
       journal.phase = "applying";
       journal.updatedAt = Date.now();
       const editByPath = new Map(edits.map((edit) => [edit.snapshot.notePath, edit]));
+      const writtenPaths = new Set<string>();
       let failure: unknown = null;
       try {
         await this.saveState();
@@ -362,6 +382,7 @@ export default class BoundedNoteChatPlugin extends Plugin {
             return edit.afterText;
           });
           entry.state = "written";
+          writtenPaths.add(entry.path);
           journal.updatedAt = Date.now();
           await this.saveState();
         }
@@ -397,8 +418,12 @@ export default class BoundedNoteChatPlugin extends Plugin {
         try {
           const current = await this.app.vault.read(target);
           const classification = classifyBatchRecoveryEntry(entry, current).classification;
-          if (classification === "after") entry.state = "written";
-          else if (classification === "before") entry.state = "rolled_back";
+          if (classification === "after") {
+            entry.state = "written";
+            writtenPaths.add(entry.path);
+          } else if (classification === "before") {
+            entry.state = writtenPaths.has(entry.path) ? "rolled_back" : "pending";
+          }
           else {
             entry.state = "conflict";
             recoveryRequired = true;
@@ -459,7 +484,9 @@ export default class BoundedNoteChatPlugin extends Plugin {
             edit.snapshot.notePath,
             entryByPath.get(edit.snapshot.notePath)?.state === "rolled_back"
               ? "rolled-back"
-              : "recovery-required",
+              : entryByPath.get(edit.snapshot.notePath)?.state === "pending"
+                ? "not-applied"
+                : "recovery-required",
           );
         }
         try {
@@ -481,10 +508,15 @@ export default class BoundedNoteChatPlugin extends Plugin {
       } catch {
         this.state.batchRecovery = journal;
       }
-      for (const edit of edits) outcomes.set(edit.snapshot.notePath, "rolled-back");
+      for (const edit of edits) {
+        outcomes.set(
+          edit.snapshot.notePath,
+          writtenPaths.has(edit.snapshot.notePath) ? "rolled-back" : "not-applied",
+        );
+      }
       return {
         outcomes,
-        message: "The batch did not finish. Every completed write was safely rolled back; no reviewed edit remains applied.",
+        message: `The batch did not finish. ${[...outcomes.values()].filter((value) => value === "rolled-back").length} completed writes were safely rolled back; ${[...outcomes.values()].filter((value) => value === "not-applied").length} reviewed edits were never written.`,
       };
     });
   }
@@ -501,7 +533,8 @@ export default class BoundedNoteChatPlugin extends Plugin {
     this.agents = [];
     this.diagnostics = {
       ok: false,
-      message: "Agent settings changed. Run Detect and check agents before chatting.",
+      stage: "discovery",
+      message: "Agent settings changed. Run the connection check in plugin settings before chatting.",
     };
     this.refreshChatViews();
   }
@@ -533,15 +566,28 @@ export default class BoundedNoteChatPlugin extends Plugin {
         if (generation !== this.agentRefreshGeneration) return superseded;
       }
       this.agents = result.profiles;
-      this.diagnostics = result.diagnostics;
+      const storedDiagnostics: AgentDiagnostics = result.diagnostics.ok
+        ? { ...result.diagnostics, stage: "discovery" }
+        : (() => {
+            const safeError = classifyAcpError(result.diagnostics.message, { phase: "launch" });
+            return {
+              ok: false,
+              stage: "discovery",
+              message: `${safeError.category} (${safeError.diagnosticCode}). ${safeError.nextAction}`,
+              ...(result.diagnostics.transport ? { transport: result.diagnostics.transport } : {}),
+            };
+          })();
+      this.diagnostics = storedDiagnostics;
       this.refreshChatViews();
-      if (showNotice) new Notice(result.diagnostics.message);
-      return result.diagnostics;
+      if (showNotice) new Notice(storedDiagnostics.message);
+      return storedDiagnostics;
     } catch (error) {
       if (generation !== this.agentRefreshGeneration) return superseded;
-      const diagnostics = {
+      const safeError = classifyAcpError(error, { phase: "launch" });
+      const diagnostics: AgentDiagnostics = {
         ok: false,
-        message: error instanceof Error ? error.message : "ACP agent discovery failed.",
+        stage: "discovery",
+        message: `${safeError.category} (${safeError.diagnosticCode}). ${safeError.nextAction}`,
       };
       this.agents = [];
       this.diagnostics = diagnostics;
@@ -552,14 +598,44 @@ export default class BoundedNoteChatPlugin extends Plugin {
   }
 
   async checkProfile(profile: AgentProfile): Promise<AgentDiagnostics> {
-    await this.acpPool.check(profile, Math.min(this.state.settings.promptTimeoutMs, 30_000));
-    return {
-      ok: true,
-      message: `${profile.label} completed ACP initialization. Agent Change Gate sent no model prompt; executable startup behavior is outside the gate.`,
-      executable: profile.executable,
-      transport: profile.transport,
-      profiles: [profile.id],
-    };
+    const generation = this.agentRefreshGeneration;
+    const expectedContextId = agentContextId(profile);
+    const superseded = (): AgentDiagnostics => ({
+      ok: false,
+      stage: "initialization",
+      message: "The connection check was superseded by newer agent settings. Run it again.",
+    });
+    const stillCurrent = (): boolean => (
+      generation === this.agentRefreshGeneration
+      && this.agents.some((candidate) => agentContextId(candidate) === expectedContextId)
+    );
+    try {
+      await this.acpPool.check(profile, Math.min(this.state.settings.promptTimeoutMs, 30_000));
+      if (!stillCurrent()) return superseded();
+      const diagnostics: AgentDiagnostics = {
+        ok: true,
+        stage: "initialization",
+        message: "The selected ACP profile completed initialization. Agent Change Gate sent no model prompt; executable startup behavior is outside the gate.",
+        transport: profile.transport,
+        profiles: [profile.id],
+      };
+      this.diagnostics = diagnostics;
+      this.refreshChatViews();
+      return diagnostics;
+    } catch (error) {
+      if (!stillCurrent()) return superseded();
+      const safeError = classifyAcpError(error, { phase: "initialize" });
+      const diagnostics: AgentDiagnostics = {
+        ok: false,
+        stage: "initialization",
+        message: `${safeError.category} (${safeError.diagnosticCode}). ${safeError.nextAction}`,
+        transport: profile.transport,
+        profiles: [profile.id],
+      };
+      this.diagnostics = diagnostics;
+      this.refreshChatViews();
+      return diagnostics;
+    }
   }
 
   getActiveMarkdownView(): MarkdownView | null {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Notice, PluginSettingTab, Setting } from "obsidian";
 
+import { classifyAcpError } from "../core/errors";
 import type { CustomAcpAgentDefinition } from "../core/types";
 import type BoundedNoteChatPlugin from "../main";
 import { AuditModal } from "./audit-modal";
@@ -22,6 +23,8 @@ export class BoundedNoteChatSettingTab extends PluginSettingTab {
     containerEl.createEl("p", {
       text: "Hermes has first-class discovery, and compatible ACP agents can be added explicitly. The selected note scope goes to the chosen local agent process; visible thread history is added only when exact-scope context is selected. The process may use a remote model provider.",
     });
+
+    this.renderConnectionReadiness(containerEl);
 
     new Setting(containerEl).setName("Hermes setup").setHeading();
 
@@ -145,38 +148,6 @@ export class BoundedNoteChatSettingTab extends PluginSettingTab {
           }
           this.scheduleSave();
         }));
-
-    new Setting(containerEl)
-      .setName("Detect and check agents")
-      .setDesc(this.plugin.diagnostics?.message ?? "Discover configured agents and initialize the default ACP profile. Agent Change Gate sends no model prompt; executable startup behavior is outside the gate.")
-      .addButton((button) => button
-        .setButtonText("Run check")
-        .onClick(async () => {
-          button.setDisabled(true).setButtonText("Checking…");
-          try {
-            const diagnostics = await this.plugin.refreshAgents(false);
-            const profile = this.plugin.agents.find((item) => item.id === this.plugin.state.settings.defaultAgent)
-              ?? this.plugin.agents[0];
-            if (diagnostics.ok && profile) {
-              const check = await this.plugin.checkProfile(profile);
-              new Notice(check.message);
-            } else {
-              new Notice(diagnostics.message);
-            }
-          } catch (error) {
-            new Notice(error instanceof Error ? error.message : "ACP agent check failed.");
-          } finally {
-            button.setDisabled(false).setButtonText("Run check");
-            this.display();
-          }
-        }));
-
-    if (this.plugin.agents.length > 0) {
-      containerEl.createEl("p", {
-        cls: "setting-item-description",
-        text: `Ready profiles: ${this.plugin.agents.map((profile) => profile.label).join(", ")}`,
-      });
-    }
 
     new Setting(containerEl).setName("Vault batch review (experimental)").setHeading();
     containerEl.createEl("p", {
@@ -371,6 +342,79 @@ export class BoundedNoteChatSettingTab extends PluginSettingTab {
             if (result.ok) this.display();
           }));
     }
+  }
+
+  private renderConnectionReadiness(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName("Connection readiness").setHeading();
+    const card = containerEl.createDiv({ cls: "bounded-note-chat-onboarding" });
+    const diagnostics = this.plugin.diagnostics;
+    const ready = diagnostics?.ok && diagnostics.stage === "initialization";
+    card.createEl("strong", {
+      text: ready
+        ? "Ready for a bounded ACP turn"
+        : diagnostics?.ok
+          ? "Agent discovered; initialization check still required"
+          : "Connection not verified",
+    });
+    const steps = card.createEl("ol", { cls: "agent-change-gate-onboarding-steps" });
+    steps.createEl("li", {
+      text: this.plugin.agents.length > 0
+        ? `${this.plugin.agents.length.toLocaleString()} local ACP profile${this.plugin.agents.length === 1 ? "" : "s"} discovered.`
+        : "Discover Hermes or configure one ACP profile.",
+    });
+    steps.createEl("li", {
+      text: ready ? "ACP initialization succeeded without a model prompt." : "Run the initialization check below.",
+    });
+    steps.createEl("li", { text: "Open a Markdown note and send one disposable scope-only test." });
+    if (diagnostics) {
+      card.createDiv({
+        cls: "agent-change-gate-onboarding-diagnostic",
+        attr: { role: "status", "aria-live": "polite" },
+        text: diagnostics.message,
+      });
+    }
+    const actions = card.createDiv({ cls: "agent-change-gate-onboarding-actions" });
+    new Setting(actions)
+      .setName("Detect and initialize default agent")
+      .setDesc("Starts the local executable and checks ACP initialization. It sends no model prompt; executable startup behavior remains outside the gate.")
+      .addButton((button) => button
+        .setButtonText("Run connection check")
+        .setCta()
+        .onClick(async () => {
+          button.setDisabled(true).setButtonText("Checking…");
+          try {
+            const discovery = await this.plugin.refreshAgents(false);
+            const profile = this.plugin.agents.find((item) => item.id === this.plugin.state.settings.defaultAgent)
+              ?? this.plugin.agents[0];
+            const result = discovery.ok && profile
+              ? await this.plugin.checkProfile(profile)
+              : discovery;
+            new Notice(result.message, result.ok ? 5_000 : 10_000);
+          } catch (error) {
+            const safe = classifyAcpError(error, { phase: "initialize" });
+            new Notice(`${safe.category} (${safe.diagnosticCode}). ${safe.nextAction}`, 10_000);
+          } finally {
+            button.setDisabled(false).setButtonText("Run connection check");
+            this.display();
+          }
+        }))
+      .addButton((button) => button
+        .setButtonText("Copy safe report")
+        .onClick(async () => {
+          const report = [
+            "Agent Change Gate diagnostics",
+            `Plugin version: ${this.plugin.manifest.version}`,
+            `Ready ACP profiles: ${this.plugin.agents.length}`,
+            `Connection state: ${this.plugin.diagnostics?.message ?? "Not checked"}`,
+            "Excluded: note text, vault paths, executables, arguments, raw errors, and credentials.",
+          ].join("\n");
+          try {
+            await navigator.clipboard.writeText(report);
+            new Notice("Safe diagnostics copied.");
+          } catch {
+            new Notice("Safe diagnostics could not be copied.");
+          }
+        }));
   }
 
   private renderCustomAgents(containerEl: HTMLElement): void {

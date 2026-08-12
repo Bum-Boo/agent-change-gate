@@ -112,6 +112,25 @@
   margin: 0;
 }
 
+.agent-change-gate-onboarding-steps {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.agent-change-gate-onboarding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.agent-change-gate-onboarding-diagnostic {
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding: 0.5rem 0.6rem;
+}
+
 .agent-change-gate-diff-summary {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
@@ -277,6 +296,15 @@
   overflow: auto;
 }
 
+.agent-change-gate-batch-result {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  line-height: 1.45;
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.75rem;
+}
+
 .agent-change-gate-batch-progress-item {
   align-items: center;
   border: 1px solid var(--background-modifier-border);
@@ -313,5 +341,15 @@
 @media (max-width: 700px) {
   .agent-change-gate-diff-line {
     grid-template-columns: 3.5ch 3.5ch 2ch minmax(max-content, 1fr) auto;
+  }
+
+  .agent-change-gate-batch-progress-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-change-gate-onboarding-actions .clickable-icon,
+  .agent-change-gate-onboarding-actions button {
+    width: 100%;
   }
 }

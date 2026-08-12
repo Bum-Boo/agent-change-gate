@@ -25,7 +25,7 @@
    ```
 
 3. Obsidian의 **설정 → 커뮤니티 플러그인**에서 플러그인을 새로고침하고 **Agent Change Gate**를 켭니다.
-4. **설정 → Agent Change Gate**에서 **Detect and check agents**를 실행합니다.
+4. **설정 → Agent Change Gate**에서 **Run connection check**를 실행합니다.
 
 ## Hermes로 시작하기
 

@@ -3,15 +3,39 @@
 [![CI](https://github.com/Bum-Boo/agent-change-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/Bum-Boo/agent-change-gate/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> ACP-proposed edits returned through this chat are scope-checked and stay drafts until you review them.
+[한국어 안내](docs/README.ko.md)
 
-Agent Change Gate is a desktop ACP client for deliberate note work. Choose the current note body, an exact selection, or existing YAML frontmatter when you send a request. The plugin captures that scope, keeps the conversation tied to the note and agent, and treats every proposed replacement as a draft.
+> **Let AI propose. You decide what changes.**
 
-The unreleased `0.3.0` development branch also adds an experimental, opt-in **Vault Batch Review** flow. It operates only on an explicitly selected, bounded set of Markdown notes. Each selected note is sent in its own fresh ACP turn without conversation history, each returned draft is reviewed separately, and approved drafts still require one final batch confirmation before any write begins.
+Agent Change Gate is a desktop change-control client for deliberate note work with Hermes and compatible ACP agents. Choose the current note body, an exact selection, or existing YAML frontmatter. The selected scope goes to the agent, and every replacement returned through this plugin remains a draft until you review it.
 
-A reviewable draft is shown as a bounded, complete line diff and is applied only after you approve it. Normal-sized comparisons use an exact line diff; when exact comparison work exceeds the bound, the modal uses a coarse but complete remove/add fallback. Oversized proposals that cannot be rendered completely are not applyable. If the note path or captured content changed while the agent was responding, the proposal is refused instead of being applied to stale text.
+It is not a general-purpose autonomous vault agent. Its job is to keep the host-mediated path from prompt to note change narrow, inspectable, and guarded.
 
-> Status: `0.3.0` is under development and has not been released. The latest downloadable version remains the public `0.2.0` prerelease, which is not listed in Obsidian Community Plugins. Core helpers have automated tests and Hermes ACP initialization has been verified, but the `0.3.0` batch GUI, real-model batch turns, recovery flow, external beta use, and broader compatibility remain unverified.
+## Three deliberate differences
+
+1. **Proposal-only host contract.** The plugin grants no ACP client filesystem or terminal capability, and permission requests fail closed. The external agent process can still have its own operating-system permissions; Agent Change Gate is not an OS sandbox.
+2. **Exact snapshot, complete review, guarded commit.** A proposal is bound to the captured path and scope text. A stale path or scope is refused, and a replacement that cannot be rendered as a bounded, complete diff is not applyable.
+3. **Bounded multi-note change sets, not blind automation.** The unreleased `0.3.0` development build adds opt-in Vault Batch Review for at most 20 explicitly selected Markdown notes and 500,000 selected-scope characters. Every note gets a fresh no-history ACP turn, a separate draft review, and one final confirmation before writes. This batch flow and its recovery path remain experimental and unverified in the Lab.
+
+## Release and verification truth
+
+| Surface | Current truth |
+| --- | --- |
+| Public download | `0.2.0` is the latest GitHub prerelease. It contains the single-note flow and requires manual installation. |
+| Development source | `0.3.0` is unreleased development work. Vault Batch Review is not present in the `0.2.0` archive. |
+| Lab evidence | On 2026-08-13, an isolated Lab vault ran Obsidian desktop 1.13.6 on Windows with Hermes Agent 0.20.0 over WSL stdio. One real **Ask** turn succeeded, followed by one real edit proposal that reached a complete diff and was explicitly applied. |
+| Not yet verified | That smoke run did not exercise batch generation, batch apply, rollback, or recovery. External beta use, other ACP implementations, and broader operating-system compatibility also remain unverified. |
+| Distribution and funding | The plugin is not listed in Obsidian Community Plugins. Funding is not enabled. |
+
+Automated tests cover core bounds and safety helpers, but they are not a substitute for the missing GUI, real-model batch, recovery, compatibility, and external-user evidence. See [ACP compatibility](docs/COMPATIBILITY.md) and the [external beta protocol](docs/BETA_TESTING.md).
+
+## Isolated Lab evidence
+
+These screenshots record the two successful single-note model turns described above. They came from an unreleased `0.3.0` development working tree, but no exact commit or packaged-asset identity was recorded at capture time. Treat them as limited UI evidence, not reproducible release proof. They do not show or establish batch or recovery behavior.
+
+| Scope-only Ask reply | Complete diff before apply | Reviewed edit after apply |
+| --- | --- | --- |
+| [![Hermes scope-only reply](docs/assets/hermes-scope-only-reply.jpg)](docs/assets/hermes-scope-only-reply.jpg) | [![Complete diff review](docs/assets/complete-diff-review.jpg)](docs/assets/complete-diff-review.jpg) | [![Reviewed edit applied](docs/assets/reviewed-edit-applied.jpg)](docs/assets/reviewed-edit-applied.jpg) |
 
 ## What the gate covers
 
@@ -25,7 +49,7 @@ The gate covers context selected in Agent Change Gate and note writes performed 
 - stale note-path or content snapshots are refused;
 - a local checkpoint supports one guarded undo when its bounded review diff can be rendered;
 - scope receipts omit instruction, note-body, and model-response plaintext while recording size, deterministic hashes, and outcome;
-- experimental batch mode is off by default, accepts at most 20 explicitly selected Markdown notes and 500,000 selected-scope characters, sends one fresh no-history ACP turn per note, and requires separate draft reviews plus a final batch confirmation;
+- in the unreleased `0.3.0` development build, experimental batch mode is off by default, accepts at most 20 explicitly selected Markdown notes and 500,000 selected-scope characters, sends one fresh no-history ACP turn per note, and requires separate draft reviews plus a final batch confirmation;
 
 ## What it does not cover
 
@@ -37,7 +61,7 @@ Use agents you trust. Use an isolated OS account, VM, or container when you need
 
 - focused conversations that return to the same note and agent;
 - review-before-write editing of note bodies, selections, and frontmatter;
-- bounded, user-selected batch work where every Markdown note is sent separately, reviewed separately, and applied only after a final batch confirmation;
+- the unreleased `0.3.0` development build's bounded, user-selected batch flow, where every Markdown note is sent separately, reviewed separately, and applied only after a final batch confirmation;
 - writers who prefer deliberate, guarded edits over unattended vault-wide changes;
 - existing Hermes users who want first-class discovery without locking the product to one ACP runtime.
 
@@ -56,7 +80,7 @@ Use agents you trust. Use an isolated OS account, VM, or container when you need
 - either Hermes Agent with a configured profile, or a compatible ACP stdio agent you configure explicitly;
 - any model/provider credentials managed by that agent, never pasted into this plugin.
 
-Windows native and WSL transports are supported. Hermes auto-detection tries WSL first on Windows, then a native executable.
+Windows native and WSL launch modes are implemented. Hermes auto-detection tries WSL first on Windows, then a native executable. Only the exact configuration in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) has real model-turn evidence.
 
 ## Install the latest published prerelease
 
@@ -70,7 +94,11 @@ Windows native and WSL transports are supported. Hermes auto-detection tries WSL
    Obsidian loads `main.js`, `manifest.json`, and `styles.css`; keep `LICENSE`, `THIRD_PARTY_NOTICES.md`, and `LICENSES/` beside them.
 
 3. In Obsidian, open **Settings → Community plugins**, reload plugins, and enable **Agent Change Gate**.
-4. Open **Settings → Agent Change Gate** and run **Detect and check agents**.
+4. Open **Settings → Agent Change Gate** and run **Run connection check**.
+
+### BRAT beta status
+
+There is no published `0.3.0` BRAT beta today. BRAT instructions will be added only after a matching `0.3.x` GitHub prerelease with the standard plugin assets has been built, downloaded, and checked. A development branch is not a released beta.
 
 ## Hermes quick start
 
@@ -135,13 +163,13 @@ An accepted edit is still refused if the active note path or exact note content 
 
 ## Privacy and local data
 
-The plugin itself makes no HTTP requests and has no telemetry. Each single-note ACP turn contains your instruction, the vault-relative logical note path, selected scope text, and task/scope labels. Only when you opt into exact-scope thread context for single-note chat does it also include up to 12 recent visible user/assistant messages capped at 4,000 characters each. Batch mode instead starts one fresh turn per selected note and sends no thread history. The agent may send that content to its configured model provider, so a batch can create multiple billed model turns.
+The plugin itself makes no HTTP requests and has no telemetry. Each single-note ACP turn contains your instruction, the vault-relative logical note path, selected scope text, and task/scope labels. Only when you opt into exact-scope thread context for single-note chat does it also include up to 12 recent visible user/assistant messages capped at 4,000 characters each. The unreleased `0.3.0` batch mode instead starts one fresh turn per selected note and sends no thread history. The agent may send that content to its configured model provider, so a batch can create multiple billed model turns.
 
 Local plugin data is unencrypted plaintext and can contain bounded chat history, eligible full-note before/after single-edit checkpoints, a bounded batch recovery journal with original replaced-scope text and before/after hashes, plaintext launch settings that must not contain secrets, and up to 500 scope receipts retained for 90 days. Vault sync or backup tools may copy that file off-device. At most 200 threads and 2,000,000 message characters are retained globally; checkpoint and batch recovery size, count, age, and total storage are also bounded. Receipts contain no instruction, note text, replacement, or model response, but their deterministic hashes can confirm guessed content. Chats, recovery state, and receipts have separate clear controls. Read [PRIVACY.md](PRIVACY.md) before using sensitive notes.
 
 ## Security model
 
-Host-side controls include a schema-validated response object with size bounds, bounded diff work, inert plain-text reply rendering, exact stale-snapshot checks, review-before-write diffs, no shell interpolation, a restricted child environment, empty ACP client capabilities, denied client filesystem/terminal methods, and fail-closed permission handling. Batch mode adds deterministic candidate bounds, one no-history turn per note, an all-target stale preflight before the first write, and guarded per-file recovery. Multi-file writes remain non-atomic and best-effort rollback is not a transaction guarantee. First-class Hermes launches set Hermes' MCP-suppression flag and send an empty session MCP list; a separate process can ignore host requests.
+Host-side controls include a schema-validated response object with size bounds, bounded diff work, inert plain-text reply rendering, exact stale-snapshot checks, review-before-write diffs, no shell interpolation, a restricted child environment, empty ACP client capabilities, denied client filesystem/terminal methods, and fail-closed permission handling. The unreleased `0.3.0` batch path adds deterministic candidate bounds, one no-history turn per note, an all-target stale preflight before the first write, and guarded per-file recovery. Its GUI and real-model recovery behavior remain manually unverified. Multi-file writes remain non-atomic and best-effort rollback is not a transaction guarantee. First-class Hermes launches set Hermes' MCP-suppression flag and send an empty session MCP list; a separate process can ignore host requests.
 
 These controls reduce accidental host-mediated access; they are not an OS sandbox for the child process. See [SECURITY.md](SECURITY.md).
 
@@ -171,7 +199,7 @@ Agent Change Gate is an independent community project. Mention of Obsidian, ACP,
 
 ## Releases and funding
 
-Version `0.2.0` is the latest published GitHub prerelease. Version `0.3.0`, including experimental Vault Batch Review, is still unreleased development work and has no release asset or compatibility claim. GitHub prerelease availability is separate from Obsidian Community Plugins distribution.
+Version `0.2.0` is the latest published GitHub prerelease. Version `0.3.0`, including experimental Vault Batch Review, is still unreleased development work and has no release asset or batch compatibility claim. GitHub prerelease availability is separate from Obsidian Community Plugins distribution. The staged beta criteria are documented in [docs/BETA_TESTING.md](docs/BETA_TESTING.md), and the unreleased change boundary is recorded in [docs/releases/0.3.0.md](docs/releases/0.3.0.md).
 
 Funding is not enabled. No donation URL or `.github/FUNDING.yml` is shipped. Sponsorship should be enabled only after external beta retention is demonstrated; see [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md).
 

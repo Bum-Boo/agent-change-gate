@@ -1,16 +1,16 @@
-## Summary
+## What changed
 
-Describe the user-visible change and why it is needed.
+Describe the user-visible behavior and why it belongs in Agent Change Gate.
 
-## Safety impact
+## Safety boundary
 
-- [ ] Scope capture and exact-path isolation remain intact.
-- [ ] Agent output still requires bounded review and explicit approval before a write.
-- [ ] No credentials, vault contents, provider responses, or generated `main.js` are included.
-- [ ] New or adapted third-party code has complete provenance and license notices.
+- [ ] No new filesystem, terminal, shell, or unattended-write capability is granted to the agent.
+- [ ] Every plugin-mediated write remains snapshot-bound, completely reviewable, and stale-checked.
+- [ ] Tests use synthetic content and no credentials, personal vault paths, or private data are included.
 
 ## Verification
 
 - [ ] `npm run check`
-- [ ] Relevant regression tests added or updated
-- [ ] Manual Obsidian behavior checked when the UI or plugin lifecycle changed
+- [ ] `npm audit --omit=dev`
+- [ ] Relevant isolated-vault manual checks are recorded, or the missing checks are stated explicitly.
+- [ ] README, privacy, security, compatibility, and release truth remain synchronized.

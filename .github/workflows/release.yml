@@ -27,6 +27,8 @@ jobs:
       - run: npm run check
       - name: Validate tag
         run: test "${GITHUB_REF_NAME}" = "$(node -p "require('./manifest.json').version")"
+      - name: Validate public release truth
+        run: npm run validate:public-release
       - run: npm run package
       - name: Create plugin archive
         run: cd dist && zip -r ../agent-change-gate-${GITHUB_REF_NAME}.zip main.js manifest.json styles.css LICENSE THIRD_PARTY_NOTICES.md LICENSES docs README.md PRIVACY.md SECURITY.md
@@ -47,9 +49,9 @@ jobs:
           )
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
-            gh release edit "${GITHUB_REF_NAME}" --prerelease --verify-tag
+            gh release edit "${GITHUB_REF_NAME}" --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --prerelease --verify-tag
           else
-            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --generate-notes --prerelease --verify-tag
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --prerelease --verify-tag
           fi
         env:
           GH_TOKEN: ${{ github.token }}

@@ -2,4 +2,4 @@ blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability privately
     url: https://github.com/Bum-Boo/agent-change-gate/security/advisories/new
-    about: Do not disclose sensitive vault content or vulnerability details in a public issue.
+    about: Do not disclose vulnerabilities or sensitive vault content in a public issue.

@@ -21,7 +21,16 @@ import {
   type BatchCandidate,
 } from "../core/batch";
 import { appendAuditRecord, createAuditRecord, updateAuditOutcome } from "../core/audit";
+import {
+  canBeginVaultBatchRun,
+  decideVaultBatchClose,
+  sameVaultBatchSetup,
+  vaultBatchTurnBlockReason,
+  type VaultBatchCloseDecision,
+  type VaultBatchSetupIdentity,
+} from "../core/batch-close";
 import { diffLines } from "../core/diff";
+import { classifyAcpError } from "../core/errors";
 import { instructionError } from "../core/input";
 import { buildAgentPrompt, parseAgentReply } from "../core/protocol";
 import {
@@ -65,7 +74,6 @@ export interface ApprovedVaultBatchEdit {
 }
 
 interface BatchItem {
-  file: TFile;
   snapshot: ScopeSnapshot;
   candidate: BatchCandidate;
   status: BatchItemStatus;
@@ -101,9 +109,9 @@ function pathInFolder(path: string, folder: string, includeSubfolders: boolean):
 }
 
 function isProtectedBatchPath(path: string): boolean {
-  const identity = path.toLocaleLowerCase();
+  const identity = path.toLowerCase();
   return DEFAULT_BATCH_EXCLUDED_PREFIXES.some((prefix) => {
-    const protectedIdentity = prefix.toLocaleLowerCase();
+    const protectedIdentity = prefix.toLowerCase();
     return identity === protectedIdentity || identity.startsWith(`${protectedIdentity}/`);
   });
 }
@@ -136,17 +144,25 @@ export class VaultBatchModal extends Modal {
   private search = "";
   private selectedPaths = new Set<string>();
   private instructionEl: HTMLTextAreaElement | null = null;
+  private prepareButton: ButtonComponent | null = null;
   private candidateListEl: HTMLElement | null = null;
   private candidateSummaryEl: HTMLElement | null = null;
   private progressEl: HTMLElement | null = null;
   private liveStatusEl: HTMLElement | null = null;
   private items: BatchItem[] = [];
+  private preparing = false;
   private generating = false;
   private applying = false;
   private closed = false;
   private cancelRequested = false;
   private activeRequest: { profileId: string; threadKey: string } | null = null;
   private batchId = "";
+  private closeRequestActive = false;
+  private closeApproved = false;
+  private batchRunToken: symbol | null = null;
+  private liveStatusText = "";
+  private batchResultMessage: string | null = null;
+  private generatedAgent: { profileId: string; contextId: string } | null = null;
 
   constructor(private readonly plugin: BoundedNoteChatPlugin) {
     super(plugin.app);
@@ -154,13 +170,20 @@ export class VaultBatchModal extends Modal {
 
   override onOpen(): void {
     this.closed = false;
+    this.closeApproved = false;
+    this.closeRequestActive = false;
     this.modalEl.addClass("agent-change-gate-batch-modal");
+    this.liveStatusEl = this.modalEl.createDiv({
+      cls: "visually-hidden agent-change-gate-batch-live-status",
+      attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" },
+      text: this.liveStatusText,
+    });
     if (this.plugin.isBatchRecoveryLocked()) {
       this.contentEl.createEl("h2", { text: "Vault batch review is locked" });
       this.contentEl.createEl("p", {
         text: "Resolve or explicitly abandon the existing batch recovery state in Agent Change Gate settings before generating more billed drafts.",
       });
-      new ButtonComponent(this.contentEl).setButtonText("Close").onClick(() => this.close());
+      new ButtonComponent(this.contentEl).setButtonText("Close").onClick(() => this.requestUserClose());
       return;
     }
     this.selectedAgent = this.plugin.state.settings.defaultAgent;
@@ -172,6 +195,7 @@ export class VaultBatchModal extends Modal {
   override onClose(): void {
     this.closed = true;
     this.cancelRequested = true;
+    this.batchRunToken = null;
     if (this.activeRequest) {
       void this.plugin.acpPool.cancel(this.activeRequest.profileId, this.activeRequest.threadKey);
     }
@@ -183,7 +207,88 @@ export class VaultBatchModal extends Modal {
     void this.plugin.saveState().catch(() => {
       new Notice("Batch receipt metadata could not be saved while closing the review.");
     });
+    this.liveStatusEl?.remove();
+    this.liveStatusEl = null;
     this.contentEl.empty();
+  }
+
+  override close(): void {
+    if (this.closeApproved) {
+      super.close();
+      return;
+    }
+    if (!this.closed) this.requestUserClose();
+  }
+
+  private requestUserClose(): void {
+    if (this.closed || this.closeRequestActive) return;
+    void this.resolveCloseRequest();
+  }
+
+  private closeDecision(): VaultBatchCloseDecision {
+    const discardableDrafts = this.items.filter((item) => (
+      item.status === "ready" || item.status === "approved"
+    )).length;
+    return decideVaultBatchClose({
+      applying: this.applying,
+      generating: this.generating,
+      discardableDrafts,
+    });
+  }
+
+  private finishClose(): void {
+    this.closeApproved = true;
+    super.close();
+  }
+
+  private async resolveCloseRequest(): Promise<void> {
+    const decision = this.closeDecision();
+    if (decision === "block_applying") {
+      new Notice("Wait for the active batch write and recovery checks to finish. This review cannot close while notes may be changing.");
+      return;
+    }
+    if (decision === "close") {
+      this.finishClose();
+      return;
+    }
+
+    this.closeRequestActive = true;
+    try {
+      const discardableDrafts = this.items.filter((item) => (
+        item.status === "ready" || item.status === "approved"
+      )).length;
+      const cancelling = decision === "confirm_cancel_generation";
+      const accepted = await new ConfirmModal(
+        this.app,
+        cancelling ? "Stop batch generation and close?" : `Discard ${discardableDrafts} unapplied drafts?`,
+        cancelling
+          ? `Agent Change Gate will request cancellation of the active ACP turn and permanently discard any drafts already generated in this review${discardableDrafts > 0 ? ` (${discardableDrafts} currently unapplied)` : ""}. No note changes have started.`
+          : `Closing now permanently discards ${discardableDrafts} generated or reviewed drafts that have not been applied. No notes will change.`,
+        cancelling ? "Stop and close" : "Discard drafts and close",
+      ).waitForDecision();
+      if (!accepted || this.closed) return;
+
+      const currentDecision = this.closeDecision();
+      if (currentDecision === "block_applying") {
+        new Notice("The batch started applying while close confirmation was open. Wait for the write and recovery checks to finish.");
+        return;
+      }
+      if (currentDecision === "confirm_cancel_generation") {
+        this.cancelRequested = true;
+        this.renderProgress();
+        const request = this.activeRequest;
+        if (request) {
+          try {
+            await this.plugin.acpPool.cancel(request.profileId, request.threadKey);
+          } catch {
+            new Notice("The active ACP turn did not acknowledge cancellation. The review will close and no draft from that turn will be applied.");
+          }
+        }
+      }
+      this.finishClose();
+    } finally {
+      this.closeRequestActive = false;
+    }
   }
 
   private renderSetup(): void {
@@ -210,7 +315,12 @@ export class VaultBatchModal extends Modal {
 
     const folders = new Set<string>([""]);
     for (const file of this.plugin.batchMarkdownFiles()) {
-      if (!isProtectedBatchPath(file.path)) folders.add(folderOf(file.path));
+      if (isProtectedBatchPath(file.path)) continue;
+      let folder = folderOf(file.path);
+      while (folder) {
+        folders.add(folder);
+        folder = folderOf(folder);
+      }
     }
     new Setting(contentEl)
       .setName("Folder")
@@ -275,6 +385,8 @@ export class VaultBatchModal extends Modal {
       });
 
     this.candidateSummaryEl = contentEl.createDiv({ cls: "bounded-note-chat-scope-receipt" });
+    this.candidateSummaryEl.setAttribute("role", "status");
+    this.candidateSummaryEl.setAttribute("aria-live", "polite");
     this.candidateListEl = contentEl.createDiv({ cls: "agent-change-gate-batch-files" });
     this.renderCandidateList();
 
@@ -292,20 +404,20 @@ export class VaultBatchModal extends Modal {
     });
 
     const actions = contentEl.createDiv({ cls: "bounded-note-chat-diff-actions" });
-    new ButtonComponent(actions)
+    this.prepareButton = new ButtonComponent(actions)
       .setButtonText("Prepare selected notes")
       .setCta()
       .onClick(() => void this.prepareAndGenerate());
-    new ButtonComponent(actions).setButtonText("Cancel").onClick(() => this.close());
+    new ButtonComponent(actions).setButtonText("Cancel").onClick(() => this.requestUserClose());
   }
 
   private visibleFiles(): TFile[] {
-    const query = this.search.trim().toLocaleLowerCase();
+    const query = this.search.trim().toLowerCase();
     return this.plugin.batchMarkdownFiles()
       .filter((file) => normalizeVaultBatchPath(file.path) === file.path)
       .filter((file) => !isProtectedBatchPath(file.path))
       .filter((file) => pathInFolder(file.path, this.selectedFolder, this.includeSubfolders))
-      .filter((file) => !query || file.path.toLocaleLowerCase().includes(query))
+      .filter((file) => !query || file.path.toLowerCase().includes(query))
       .sort((left, right) => left.path.localeCompare(right.path));
   }
 
@@ -335,65 +447,135 @@ export class VaultBatchModal extends Modal {
         text: `${(visible.length - rendered.length).toLocaleString()} more paths are hidden. Narrow the path filter.`,
       });
     }
+    const visiblePaths = new Set(visible.map((file) => file.path));
+    const hiddenSelected = [...this.selectedPaths]
+      .filter((path) => !visiblePaths.has(path))
+      .sort((left, right) => left.localeCompare(right));
     this.candidateSummaryEl?.setText(
-      `${this.selectedPaths.size.toLocaleString()} selected / ${visible.length.toLocaleString()} visible; hard limit 20 files`,
+      `${this.selectedPaths.size.toLocaleString()} selected / ${visible.length.toLocaleString()} visible; hard limit 20 files`
+      + (hiddenSelected.length > 0
+        ? ` · ${hiddenSelected.length.toLocaleString()} selected outside this filter: ${hiddenSelected.join(", ")}`
+        : ""),
     );
   }
 
   private async prepareAndGenerate(): Promise<void> {
-    if (this.generating || this.applying) return;
-    if (this.plugin.isBatchRecoveryLocked()) {
-      new Notice("Resolve the existing batch recovery state before generating another batch.");
-      return;
-    }
-    const instruction = this.instructionEl?.value.trim() ?? "";
-    const instructionProblem = instructionError(instruction);
-    if (instructionProblem) {
-      new Notice(instructionProblem);
-      return;
-    }
-    const profile = this.plugin.agents.find((item) => item.id === this.selectedAgent);
-    if (!profile) {
-      new Notice("Choose a ready ACP agent first.");
-      return;
-    }
-    if (this.selectedPaths.size === 0) {
-      new Notice("Select at least one Markdown note.");
-      return;
-    }
-    if (this.selectedPaths.size > this.plugin.state.settings.vaultBatchMaxFiles) {
-      new Notice("The selection exceeds the configured batch file limit.");
-      return;
-    }
-
-    let prepared: PreparedSelection;
-    try {
-      prepared = await this.prepareSelection([...this.selectedPaths]);
-    } catch (error) {
-      new Notice(error instanceof Error ? error.message : "The batch selection could not be prepared.");
-      return;
-    }
-    if (prepared.items.length === 0) {
-      new Notice("No selected note has an eligible scope.");
-      return;
-    }
-    const accepted = await new ConfirmModal(
-      this.app,
-      `Generate drafts for ${prepared.items.length} notes?`,
-      `Agent Change Gate will send ${prepared.scopeCharacters.toLocaleString()} scope characters from ${prepared.items.length} notes in ${prepared.items.length} separate ACP turns. Paths: ${prepared.items.map((item) => item.file.path).join(", ")}.${prepared.skipped.length > 0 ? ` Not sent: ${prepared.skipped.map((item) => `${item.path} (${item.reason})`).join(", ")}.` : ""} The agent or model provider may retain content and charge for use. No note will change yet.`,
-      `Generate ${prepared.items.length} drafts`,
-    ).waitForDecision();
-    if (!accepted || this.closed) return;
-
-    this.items = prepared.items;
-    this.batchId = randomUUID();
+    if (!canBeginVaultBatchRun({
+      preparing: this.preparing,
+      generating: this.generating,
+      applying: this.applying,
+      closed: this.closed,
+    })) return;
+    const runToken = Symbol("vault-batch-run");
+    this.batchRunToken = runToken;
+    this.preparing = true;
     this.cancelRequested = false;
-    this.generating = true;
-    this.renderProgress();
-    await this.generateDrafts(profile, instruction);
+    this.prepareButton?.setDisabled(true).setButtonText("Preparing…");
+    try {
+      if (this.plugin.isBatchRecoveryLocked()) {
+        new Notice("Resolve the existing batch recovery state before generating another batch.");
+        return;
+      }
+      const instruction = this.instructionEl?.value.trim() ?? "";
+      const instructionProblem = instructionError(instruction);
+      if (instructionProblem) {
+        new Notice(instructionProblem);
+        return;
+      }
+      const profile = this.plugin.agents.find((item) => item.id === this.selectedAgent);
+      if (!profile) {
+        new Notice("Choose a ready ACP agent first.");
+        return;
+      }
+      if (this.selectedPaths.size === 0) {
+        new Notice("Select at least one Markdown note.");
+        return;
+      }
+      if (this.selectedPaths.size > this.plugin.state.settings.vaultBatchMaxFiles) {
+        new Notice("The selection exceeds the configured batch file limit.");
+        return;
+      }
+      const expectedAgentContextId = agentContextId(profile);
+      const setup: VaultBatchSetupIdentity = {
+        agentContextId: expectedAgentContextId,
+        instruction,
+        paths: [...this.selectedPaths].sort((left, right) => left.localeCompare(right)),
+        scope: this.batchScope,
+      };
+
+      let prepared: PreparedSelection;
+      try {
+        prepared = await this.prepareSelection([...setup.paths], setup.scope);
+      } catch (error) {
+        new Notice("The batch selection could not be prepared. Close selected Markdown views, verify the notes and configured limits, then try again. No model turn was started.");
+        return;
+      }
+      if (!this.isCurrentBatchRun(runToken)) return;
+      if (!this.sameCurrentSetup(setup)) {
+        new Notice("The agent, scope, instruction, or selected paths changed during preparation. No model turn was started.");
+        return;
+      }
+      if (prepared.items.length === 0) {
+        new Notice("No selected note has an eligible scope.");
+        return;
+      }
+      const accepted = await new ConfirmModal(
+        this.app,
+        `Generate drafts for ${prepared.items.length} notes?`,
+        `Agent: ${profile.label}. Scope: ${setup.scope}. Agent Change Gate will send ${prepared.scopeCharacters.toLocaleString()} scope characters from ${prepared.items.length} notes in ${prepared.items.length} separate ACP turns. Paths: ${prepared.items.map((item) => item.snapshot.notePath).join(", ")}.${prepared.skipped.length > 0 ? ` Not sent: ${prepared.skipped.map((item) => `${item.path} (${item.reason})`).join(", ")}.` : ""} The agent or model provider may retain content and charge for use. No note will change yet.`,
+        `Generate ${prepared.items.length} drafts`,
+      ).waitForDecision();
+      if (!accepted || !this.isCurrentBatchRun(runToken)) return;
+      if (!this.sameCurrentSetup(setup)) {
+        new Notice("The agent, scope, instruction, or selected paths changed while confirmation was open. No model turn was started.");
+        return;
+      }
+
+      const currentProfile = this.plugin.agents.find((item) => item.id === profile.id);
+      if (!currentProfile || agentContextId(currentProfile) !== expectedAgentContextId) {
+        new Notice("The selected ACP agent changed during batch preparation. No model turn was started.");
+        return;
+      }
+      if (this.plugin.isBatchRecoveryLocked()) {
+        new Notice("Batch recovery became locked during preparation. No model turn was started.");
+        return;
+      }
+
+      this.items = prepared.items;
+      this.batchId = randomUUID();
+      this.generatedAgent = { profileId: currentProfile.id, contextId: expectedAgentContextId };
+      this.batchResultMessage = null;
+      this.announceStatus(`Starting ${prepared.items.length} separate draft turns.`);
+      this.preparing = false;
+      this.generating = true;
+      this.renderProgress();
+      await this.generateDrafts(currentProfile, instruction, setup.scope, runToken, expectedAgentContextId);
+    } finally {
+      if (this.batchRunToken === runToken) {
+        this.batchRunToken = null;
+        this.generating = false;
+        this.activeRequest = null;
+      }
+      this.preparing = false;
+      this.prepareButton?.setDisabled(false).setButtonText("Prepare selected notes");
+    }
   }
 
-  private async prepareSelection(paths: string[]): Promise<PreparedSelection> {
+  private isCurrentBatchRun(runToken: symbol): boolean {
+    return this.batchRunToken === runToken && !this.cancelRequested && !this.closed;
+  }
+
+  private sameCurrentSetup(expected: Readonly<VaultBatchSetupIdentity>): boolean {
+    const currentProfile = this.plugin.agents.find((profile) => profile.id === this.selectedAgent);
+    return sameVaultBatchSetup(expected, {
+      agentContextId: currentProfile ? agentContextId(currentProfile) : null,
+      instruction: this.instructionEl?.value.trim() ?? "",
+      paths: [...this.selectedPaths].sort((left, right) => left.localeCompare(right)),
+      scope: this.batchScope,
+    });
+  }
+
+  private async prepareSelection(paths: string[], scope: BatchScope): Promise<PreparedSelection> {
     const files: Array<{ file: TFile; content: string }> = [];
     for (const path of paths.sort((left, right) => left.localeCompare(right))) {
       const file = this.plugin.batchMarkdownFiles().find((item) => item.path === path);
@@ -411,7 +593,10 @@ export class VaultBatchModal extends Modal {
             MAX_BATCH_FILE_CHARACTERS,
             this.plugin.state.settings.maxContextChars,
           ),
-          maxTotalCharacters: MAX_BATCH_TOTAL_CHARACTERS,
+          maxTotalCharacters: Math.min(
+            MAX_BATCH_TOTAL_CHARACTERS,
+            this.plugin.state.settings.vaultBatchMaxTotalChars,
+          ),
           maxProposals: this.plugin.state.settings.vaultBatchMaxFiles,
         },
       },
@@ -429,9 +614,9 @@ export class VaultBatchModal extends Modal {
       if (!file) continue;
       let snapshot: ScopeSnapshot;
       try {
-        snapshot = captureScope(file.path, candidate.content, this.batchScope);
+        snapshot = captureScope(file.path, candidate.content, scope);
       } catch (error) {
-        if (this.batchScope === "frontmatter") {
+        if (scope === "frontmatter") {
           skipped.push({ path: file.path, reason: "no complete YAML frontmatter" });
           continue;
         }
@@ -442,7 +627,6 @@ export class VaultBatchModal extends Modal {
       }
       scopeCharacters += snapshot.originalScope.length;
       items.push({
-        file,
         snapshot,
         candidate,
         status: "queued",
@@ -456,147 +640,215 @@ export class VaultBatchModal extends Modal {
     return { items, scopeCharacters, skipped };
   }
 
-  private async generateDrafts(profile: AgentProfile, instruction: string): Promise<void> {
+  private async generateDrafts(
+    profile: AgentProfile,
+    instruction: string,
+    scope: BatchScope,
+    runToken: symbol,
+    expectedAgentContextId: string,
+  ): Promise<void> {
     let consecutiveFailures = 0;
-    for (let index = 0; index < this.items.length; index += 1) {
-      const item = this.items[index];
-      if (!item) continue;
-      if (this.cancelRequested || this.closed) {
-        item.status = "cancelled";
-        continue;
-      }
-      item.status = "generating";
-      this.renderProgress();
-      const threadKey = `vault-batch:${this.batchId}:${index}`;
-      this.activeRequest = { profileId: profile.id, threadKey };
-      const auditRecord = createAuditRecord({
-        agentId: agentContextId(profile),
-        notePath: item.file.path,
-        scope: this.batchScope,
-        task: "edit",
-        scopeChars: item.snapshot.originalScope.length,
-        scopeHash: hashText(item.snapshot.originalScope),
-        historyChars: 0,
-        historyHash: EMPTY_HISTORY_HASH,
-      });
-      item.auditId = auditRecord.id;
-      appendAuditRecord(this.plugin.state.auditLog, auditRecord);
-      try {
-        const currentText = await this.plugin.readBatchFile(item.file);
-        if (!isSnapshotCurrent(item.snapshot, item.file.path, currentText)) {
-          item.status = "stale";
-          item.statusDetail = "The note changed before its turn was sent.";
-          updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "stale");
-          await this.plugin.saveState();
+    try {
+      for (let index = 0; index < this.items.length; index += 1) {
+        const item = this.items[index];
+        if (!item) continue;
+        if (!this.isCurrentBatchRun(runToken)) {
+          item.status = "cancelled";
           continue;
         }
-        await this.plugin.saveState();
-        const raw = await this.plugin.acpPool.prompt(
-          profile,
-          threadKey,
-          buildAgentPrompt({
-            task: "edit",
-            instruction,
-            notePath: item.file.path,
-            scope: this.batchScope,
-            noteContent: item.snapshot.originalScope,
-            priorMessages: [],
-          }),
-          {
-            timeoutMs: this.plugin.state.settings.promptTimeoutMs,
-            onStatus: (status) => {
-              item.statusDetail = status;
-              this.liveStatusEl?.setText(`${item.file.path}: ${status}`);
-            },
-          },
-        );
-        if (this.cancelRequested) throw new AcpTurnCancelledError();
-        const reply = parseAgentReply(raw, this.plugin.state.settings.maxContextChars, "edit");
-        item.message = reply.message;
-        if (reply.action !== "propose_edit" || reply.replacement === undefined) {
-          item.status = "skipped";
-          updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "replied");
-          consecutiveFailures = 0;
-          await this.plugin.saveState();
-          this.renderProgress();
-          continue;
-        }
-        const validation = validateReplacement(
-          item.snapshot,
-          reply.replacement,
-          Math.min(MAX_BATCH_FILE_CHARACTERS, this.plugin.state.settings.maxContextChars),
-          parseYaml,
-        );
-        if (!validation.ok) {
-          item.status = "blocked";
-          item.statusDetail = validation.errors.join(" ");
-          updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "blocked");
-          await this.plugin.saveState();
-          this.renderProgress();
-          continue;
-        }
-        const effectiveReplacement = replacementForSnapshot(item.snapshot, reply.replacement);
-        const afterText = applyReplacement(item.snapshot, effectiveReplacement);
-        const hostValidation = validateBatchProposals(
-          [bindBatchProposal(item.candidate, afterText)],
-          [item.candidate],
-          {
-            maxFiles: 1,
-            maxProposals: 1,
-            maxFileCharacters: Math.min(MAX_BATCH_FILE_CHARACTERS, this.plugin.state.settings.maxContextChars),
-            maxTotalCharacters: MAX_BATCH_TOTAL_CHARACTERS,
-          },
-        );
-        const render = diffLines(item.snapshot.originalScope, effectiveReplacement, {
-          maxLines: 4_000,
-          maxOperations: 4_000,
-        });
-        if (!hostValidation.ok || render.truncated) {
-          item.status = "blocked";
-          item.statusDetail = render.truncated
-            ? "The complete diff exceeds the bounded review renderer."
-            : hostValidation.diagnostics.map((diagnostic) => diagnostic.message).join(" ");
-          updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "blocked");
-        } else {
-          item.status = "ready";
-          item.summary = reply.summary;
-          item.agentWarnings = reply.warnings;
-          item.gateWarnings = validation.warnings;
-          item.effectiveReplacement = effectiveReplacement;
-          item.afterText = afterText;
-          item.afterHash = hashText(afterText);
-          updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "proposed");
-          consecutiveFailures = 0;
-        }
-      } catch (error) {
-        const cancelled = this.cancelRequested || error instanceof AcpTurnCancelledError;
-        item.status = cancelled ? "cancelled" : "failed";
-        item.statusDetail = cancelled
-          ? "Generation stopped before any edit was applied."
-          : error instanceof Error ? error.message : "ACP draft generation failed.";
-        updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, cancelled ? "cancelled" : "error");
-        if (!cancelled) consecutiveFailures += 1;
-      } finally {
-        this.activeRequest = null;
-        try {
-          await this.plugin.saveState();
-        } catch {
-          item.status = "failed";
-          item.statusDetail = "The local metadata receipt could not be saved.";
-          consecutiveFailures += 1;
-        }
+        item.status = "generating";
         this.renderProgress();
+        const threadKey = `vault-batch:${this.batchId}:${index}`;
+        const notePath = item.snapshot.notePath;
+        const auditRecord = createAuditRecord({
+          agentId: expectedAgentContextId,
+          notePath,
+          scope: item.snapshot.scope,
+          task: "edit",
+          scopeChars: item.snapshot.originalScope.length,
+          scopeHash: hashText(item.snapshot.originalScope),
+          historyChars: 0,
+          historyHash: EMPTY_HISTORY_HASH,
+        });
+        item.auditId = auditRecord.id;
+        appendAuditRecord(this.plugin.state.auditLog, auditRecord);
+        try {
+          const currentFile = this.plugin.batchMarkdownFiles().find((file) => file.path === notePath);
+          if (!currentFile) {
+            item.status = "stale";
+            item.statusDetail = "The note disappeared or moved before its turn was sent.";
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "stale");
+            await this.plugin.saveState();
+            continue;
+          }
+          const currentText = await this.plugin.readBatchFile(currentFile);
+          if (!isSnapshotCurrent(item.snapshot, currentFile.path, currentText)) {
+            item.status = "stale";
+            item.statusDetail = "The note changed before its turn was sent.";
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "stale");
+            await this.plugin.saveState();
+            continue;
+          }
+          await this.plugin.saveState();
+          const promptFile = this.plugin.batchMarkdownFiles().find((file) => file.path === notePath);
+          if (!promptFile) {
+            item.status = "stale";
+            item.statusDetail = "The note disappeared or moved while request metadata was prepared.";
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "stale");
+            continue;
+          }
+          const promptText = await this.plugin.readBatchFile(promptFile);
+          if (!isSnapshotCurrent(item.snapshot, promptFile.path, promptText)) {
+            item.status = "stale";
+            item.statusDetail = "The note changed while request metadata was prepared.";
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "stale");
+            continue;
+          }
+          const currentProfile = this.plugin.agents.find((candidate) => candidate.id === profile.id);
+          const turnBlock = vaultBatchTurnBlockReason({
+            expectedRunToken: runToken,
+            currentRunToken: this.batchRunToken,
+            cancelled: this.cancelRequested,
+            closed: this.closed,
+            recoveryLocked: this.plugin.isBatchRecoveryLocked(),
+            expectedAgentContextId,
+            currentAgentContextId: currentProfile ? agentContextId(currentProfile) : null,
+          });
+          if (turnBlock === "cancelled") throw new AcpTurnCancelledError();
+          if (turnBlock === "recovery_locked") {
+            this.cancelRequested = true;
+            item.status = "failed";
+            item.statusDetail = "Batch recovery became locked before this model turn. No further turn was started.";
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "error");
+            continue;
+          }
+          if (turnBlock === "agent_changed" || !currentProfile) {
+            this.cancelRequested = true;
+            throw new AcpTurnCancelledError("The ACP agent changed before this model turn was started.");
+          }
+          this.activeRequest = { profileId: currentProfile.id, threadKey };
+          const raw = await this.plugin.acpPool.prompt(
+            currentProfile,
+            threadKey,
+            buildAgentPrompt({
+              task: "edit",
+              instruction,
+              notePath,
+              scope,
+              noteContent: item.snapshot.originalScope,
+              priorMessages: [],
+            }),
+            {
+              timeoutMs: this.plugin.state.settings.promptTimeoutMs,
+              onStatus: (status) => {
+                item.statusDetail = status;
+                this.announceStatus(`${notePath}: ${status}`);
+              },
+            },
+          );
+          if (!this.isCurrentBatchRun(runToken)) throw new AcpTurnCancelledError();
+          const reply = parseAgentReply(raw, this.plugin.state.settings.maxContextChars, "edit");
+          item.message = reply.message;
+          if (reply.action !== "propose_edit" || reply.replacement === undefined) {
+            item.status = "skipped";
+            item.statusDetail = undefined;
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "replied");
+            consecutiveFailures = 0;
+            await this.plugin.saveState();
+            this.renderProgress();
+            continue;
+          }
+          const validation = validateReplacement(
+            item.snapshot,
+            reply.replacement,
+            Math.min(MAX_BATCH_FILE_CHARACTERS, this.plugin.state.settings.maxContextChars),
+            parseYaml,
+          );
+          if (!validation.ok) {
+            item.status = "blocked";
+            item.statusDetail = validation.errors.join(" ");
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "blocked");
+            await this.plugin.saveState();
+            this.renderProgress();
+            continue;
+          }
+          const effectiveReplacement = replacementForSnapshot(item.snapshot, reply.replacement);
+          const afterText = applyReplacement(item.snapshot, effectiveReplacement);
+          const hostValidation = validateBatchProposals(
+            [bindBatchProposal(item.candidate, afterText)],
+            [item.candidate],
+            {
+              maxFiles: 1,
+              maxProposals: 1,
+              maxFileCharacters: Math.min(MAX_BATCH_FILE_CHARACTERS, this.plugin.state.settings.maxContextChars),
+              maxTotalCharacters: MAX_BATCH_TOTAL_CHARACTERS,
+            },
+          );
+          const render = diffLines(item.snapshot.originalScope, effectiveReplacement, {
+            maxLines: 4_000,
+            maxOperations: 4_000,
+          });
+          if (!hostValidation.ok || render.truncated) {
+            item.status = "blocked";
+            item.statusDetail = render.truncated
+              ? "The complete diff exceeds the bounded review renderer."
+              : hostValidation.diagnostics.map((diagnostic) => diagnostic.message).join(" ");
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "blocked");
+          } else {
+            item.status = "ready";
+            item.statusDetail = undefined;
+            item.summary = reply.summary;
+            item.agentWarnings = reply.warnings;
+            item.gateWarnings = validation.warnings;
+            item.effectiveReplacement = effectiveReplacement;
+            item.afterText = afterText;
+            item.afterHash = hashText(afterText);
+            updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, "proposed");
+            consecutiveFailures = 0;
+          }
+        } catch (error) {
+          const cancelled = this.cancelRequested || error instanceof AcpTurnCancelledError;
+          const safeError = classifyAcpError(error, { phase: "turn" });
+          item.status = cancelled ? "cancelled" : "failed";
+          item.statusDetail = cancelled
+            ? "Generation stopped before any edit was applied."
+            : `${safeError.category} (${safeError.diagnosticCode}). ${safeError.nextAction}`;
+          updateAuditOutcome(this.plugin.state.auditLog, auditRecord.id, cancelled ? "cancelled" : "error");
+          if (!cancelled) consecutiveFailures += 1;
+        } finally {
+          this.activeRequest = null;
+          try {
+            await this.plugin.saveState();
+          } catch {
+            item.status = "failed";
+            item.statusDetail = "The local metadata receipt could not be saved.";
+            consecutiveFailures += 1;
+          }
+          this.renderProgress();
+        }
+        if (consecutiveFailures >= 3) {
+          this.cancelRequested = true;
+          for (const remaining of this.items.slice(index + 1)) remaining.status = "cancelled";
+          new Notice("Batch generation stopped after three consecutive failures.");
+          break;
+        }
       }
-      if (consecutiveFailures >= 3) {
-        this.cancelRequested = true;
-        for (const remaining of this.items.slice(index + 1)) remaining.status = "cancelled";
-        new Notice("Batch generation stopped after three consecutive failures.");
-        break;
+    } finally {
+      if (this.batchRunToken === runToken) {
+        this.generating = false;
+        this.activeRequest = null;
+        this.batchRunToken = null;
+        this.announceStatus(this.cancelRequested
+          ? "Draft generation stopped. No edit was applied."
+          : "Draft generation finished. Review every ready draft before applying.");
       }
+      this.renderProgress();
     }
-    this.generating = false;
-    this.activeRequest = null;
-    this.renderProgress();
+  }
+
+  private announceStatus(message: string): void {
+    this.liveStatusText = message;
+    this.liveStatusEl?.setText(message);
   }
 
   private renderProgress(): void {
@@ -609,10 +861,13 @@ export class VaultBatchModal extends Modal {
     const approved = this.items.filter((item) => item.status === "approved").length;
     const settled = this.items.filter((item) => item.status !== "queued" && item.status !== "generating").length;
     summary.setText(`${settled} of ${this.items.length} generated or settled; ${ready} awaiting review; ${approved} approved.`);
-    this.liveStatusEl = contentEl.createDiv({
-      cls: "visually-hidden",
-      attr: { "aria-live": "polite" },
-    });
+    if (this.batchResultMessage) {
+      contentEl.createDiv({
+        cls: "agent-change-gate-batch-result",
+        attr: { role: "region", "aria-label": "Batch apply result" },
+        text: this.batchResultMessage,
+      });
+    }
     this.progressEl = contentEl.createDiv({ cls: "agent-change-gate-batch-progress" });
     for (const item of this.items) this.renderProgressItem(this.progressEl, item);
 
@@ -633,14 +888,14 @@ export class VaultBatchModal extends Modal {
       new ButtonComponent(actions)
         .setButtonText("Close without applying")
         .setDisabled(this.applying)
-        .onClick(() => this.close());
+        .onClick(() => this.requestUserClose());
     }
   }
 
   private renderProgressItem(container: HTMLElement, item: BatchItem): void {
     const row = container.createDiv({ cls: "agent-change-gate-batch-progress-item" });
     const text = row.createDiv();
-    text.createEl("strong", { text: item.file.path });
+    text.createEl("strong", { text: item.snapshot.notePath });
     text.createDiv({
       cls: `agent-change-gate-batch-status is-${item.status}`,
       text: item.statusDetail ? `${statusLabel(item.status)} - ${item.statusDetail}` : statusLabel(item.status),
@@ -658,7 +913,7 @@ export class VaultBatchModal extends Modal {
     if (!item.effectiveReplacement || !item.auditId || this.generating || this.applying) return;
     updateAuditOutcome(this.plugin.state.auditLog, item.auditId, "proposed");
     const approved = await new DiffModal(this.app, {
-      title: `Review batch draft for ${item.file.path}`,
+      title: `Review batch draft for ${item.snapshot.notePath}`,
       original: item.snapshot.originalScope,
       replacement: item.effectiveReplacement,
       agentSummary: item.summary,
@@ -674,6 +929,7 @@ export class VaultBatchModal extends Modal {
       return;
     }
     item.status = approved ? "approved" : "rejected";
+    item.statusDetail = undefined;
     updateAuditOutcome(this.plugin.state.auditLog, item.auditId, approved ? "proposed" : "discarded");
     await this.plugin.saveState();
     this.renderProgress();
@@ -682,6 +938,7 @@ export class VaultBatchModal extends Modal {
   private async stopGeneration(): Promise<void> {
     if (!this.generating || this.cancelRequested) return;
     this.cancelRequested = true;
+    this.announceStatus("Stopping draft generation. No edit has been applied.");
     const request = this.activeRequest;
     if (request) await this.plugin.acpPool.cancel(request.profileId, request.threadKey);
     this.renderProgress();
@@ -703,6 +960,11 @@ export class VaultBatchModal extends Modal {
       });
     }
     if (edits.length === 0) return;
+    const generatedAgent = this.generatedAgent;
+    if (!generatedAgent) {
+      new Notice("The batch agent identity is unavailable. No write started.");
+      return;
+    }
     const accepted = await new ConfirmModal(
       this.app,
       `Apply ${edits.length} reviewed edits?`,
@@ -711,14 +973,30 @@ export class VaultBatchModal extends Modal {
     ).waitForDecision();
     if (!accepted || this.closed) return;
     this.applying = true;
+    this.batchResultMessage = null;
+    this.announceStatus(`Applying ${edits.length} reviewed edits with guarded recovery.`);
     this.renderProgress();
     try {
-      const result = await this.plugin.applyVaultBatch(this.batchId, this.selectedAgent, edits);
+      const result = await this.plugin.applyVaultBatch(
+        this.batchId,
+        generatedAgent.profileId,
+        generatedAgent.contextId,
+        edits,
+      );
       for (const item of this.items) {
         if (item.status !== "approved") continue;
-        const outcome = result.outcomes.get(item.file.path);
+        const outcome = result.outcomes.get(item.snapshot.notePath);
         if (!outcome) continue;
         item.status = outcome;
+        item.statusDetail = outcome === "applied"
+          ? "Reviewed edit applied."
+          : outcome === "stale"
+            ? "This target changed or disappeared after review; no batch write started."
+            : outcome === "rolled-back"
+              ? "The edit was written, then safely restored after the batch failed."
+              : outcome === "not-applied"
+                ? "This reviewed edit was not written."
+                : "The final file state requires recovery review; divergent content was not overwritten.";
         if (item.auditId) {
           updateAuditOutcome(
             this.plugin.state.auditLog,
@@ -740,9 +1018,14 @@ export class VaultBatchModal extends Modal {
       } catch {
         new Notice("The notes reached the reported batch state, but final receipt metadata could not be saved.");
       }
+      this.batchResultMessage = result.message;
+      this.announceStatus(result.message);
       new Notice(result.message);
-    } catch (error) {
-      new Notice(error instanceof Error ? error.message : "The vault batch could not be applied.");
+    } catch {
+      const message = "The vault batch could not be applied. No additional plugin write was started.";
+      this.batchResultMessage = message;
+      this.announceStatus(message);
+      new Notice(message);
     } finally {
       this.applying = false;
       this.renderProgress();

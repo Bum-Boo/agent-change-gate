@@ -1,0 +1,154 @@
+name: Metadata-only beta report
+description: Report activation, retention, and compatibility without note content or telemetry.
+title: "[Beta]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This GitHub issue is public. Your account, submission time, and submitted fields are visible and may persist in notifications, forks, archives, or caches after edits or deletion. You may edit or close the issue and ask the maintainer to delete it and exclude it from project totals; deletion is maintainer-controlled, and complete erasure cannot be guaranteed. Use the metadata-only format from docs/BETA_TESTING.md. Never include prompts, notes, model replies, credentials, absolute paths, commands, or raw logs.
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Test boundary
+      options:
+        - label: I tested in a disposable vault or verified copy and kept a normal backup.
+          required: true
+        - label: I removed sensitive content and reviewed this report before submitting it.
+          required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version-only environment
+      placeholder: Plugin 0.2.0 or exact checked prerelease; Obsidian 1.13.6; Hermes 0.20.0; Windows + WSL stdio
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Manual GitHub release archive
+        - BRAT prerelease
+    validations:
+      required: true
+  - type: dropdown
+    id: setup-time
+    attributes:
+      label: Time to first successful Ask
+      options:
+        - Under 5 minutes
+        - 5–10 minutes
+        - 11–20 minutes
+        - Over 20 minutes
+        - Blocked
+    validations:
+      required: true
+  - type: dropdown
+    id: help
+    attributes:
+      label: Live maintainer help required
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+  - type: checkboxes
+    id: completed
+    attributes:
+      label: Completed flows
+      options:
+        - label: Agent initialization
+        - label: Scope-only Ask
+        - label: Complete diff review and explicit apply or discard
+        - label: Intentional stale proposal safely blocked
+        - label: Cancellation
+        - label: Guarded single-note undo
+        - label: Experimental batch review (only if invited after its safety gate)
+  - type: dropdown
+    id: activation
+    attributes:
+      label: First-session activation result
+      options:
+        - Reviewed edit applied or deliberately discarded
+        - Scope-only Ask succeeded
+        - Initialization only
+        - Blocked before a successful turn
+    validations:
+      required: true
+  - type: dropdown
+    id: value
+    attributes:
+      label: Primary reason to keep using it
+      options:
+        - Review-before-write gate
+        - Generic agent chat
+        - Batch review
+        - Other
+        - I would not keep using it
+    validations:
+      required: true
+  - type: dropdown
+    id: week-two-return
+    attributes:
+      label: Week-two return
+      options:
+        - Returned in week 2
+        - Did not return in week 2
+        - Week 2 not reached yet
+    validations:
+      required: true
+  - type: dropdown
+    id: week-four-return
+    attributes:
+      label: Week-four return
+      options:
+        - Returned in week 4
+        - Did not return in week 4
+        - Week 4 not reached yet
+    validations:
+      required: true
+  - type: dropdown
+    id: batch-result
+    attributes:
+      label: Experimental batch result
+      options:
+        - Not invited or not run
+        - Passed the invited flow
+        - Safely blocked
+        - Failed without note loss
+        - Possible boundary or data-loss incident
+    validations:
+      required: true
+  - type: dropdown
+    id: batch-runs
+    attributes:
+      label: Completed experimental batch runs
+      options:
+        - Not invited or not run
+        - 1 run
+        - 2–4 runs
+        - 5 or more runs
+    validations:
+      required: true
+  - type: dropdown
+    id: willingness
+    attributes:
+      label: Support or payment signal
+      options:
+        - Would sponsor the maintained core now
+        - Interested in paid team support or policy tooling
+        - Maybe after more maturity
+        - Would not pay
+    validations:
+      required: true
+  - type: input
+    id: monthly-range
+    attributes:
+      label: Optional monthly support range
+      description: Enter only a coarse currency range, or leave blank; do not include billing or account details.
+      placeholder: e.g. USD 5–10 or KRW 5,000–10,000
+  - type: textarea
+    id: bounded-notes
+    attributes:
+      label: Optional metadata-only notes
+      description: No content, paths, outputs, commands, or logs. Diagnostic codes and coarse counts only.

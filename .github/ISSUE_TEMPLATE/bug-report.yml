@@ -1,49 +1,69 @@
 name: Bug report
-description: Report a reproducible Agent Change Gate problem without private note content.
+description: Report a reproducible Agent Change Gate product problem without vault content.
 title: "[Bug]: "
 labels:
   - bug
 body:
   - type: markdown
     attributes:
-      value: Never paste vault contents, credentials, provider keys, prompts, or private agent output here.
-  - type: input
-    id: version
+      value: |
+        Thanks for helping improve Agent Change Gate. Do not paste prompts, note text, model output, credentials, absolute paths, launch commands, or vulnerability details. Report security issues through [GitHub private vulnerability reporting](https://github.com/Bum-Boo/agent-change-gate/security/advisories/new).
+  - type: checkboxes
+    id: safety
     attributes:
-      label: Plugin version
-      placeholder: 0.2.0
+      label: Safe report confirmation
+      options:
+        - label: I reproduced this in a disposable vault or verified copy.
+          required: true
+        - label: This report contains no sensitive vault content, credentials, absolute paths, or raw logs.
+          required: true
+        - label: This is not a security vulnerability report.
+          required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Plugin, Obsidian, agent, and operating-system versions only.
+      placeholder: Agent Change Gate 0.2.0; Obsidian 1.13.6; Hermes 0.20.0; Windows 11
     validations:
       required: true
-  - type: input
-    id: obsidian
+  - type: dropdown
+    id: flow
     attributes:
-      label: Obsidian and operating-system versions
-      placeholder: Obsidian 1.13.4 on Windows 11
-    validations:
-      required: true
-  - type: textarea
-    id: description
-    attributes:
-      label: What happened?
-      description: Use synthetic or redacted examples only.
+      label: Affected flow
+      options:
+        - Agent discovery or initialization
+        - Single-note Ask
+        - Single-note edit review or apply
+        - Vault Batch Review
+        - Undo or recovery
+        - Settings, receipts, or deletion
+        - Packaging or installation
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Reproduction steps
+      description: Use synthetic filenames and content descriptions; never paste real note text.
     validations:
       required: true
   - type: textarea
-    id: expected
+    id: result
     attributes:
-      label: Expected behavior
+      label: Expected and actual result
+      description: Include a diagnostic code such as ACG-ACP-TIMEOUT when shown, but no raw error text.
     validations:
       required: true
-  - type: checkboxes
-    id: privacy
+  - type: dropdown
+    id: write-impact
     attributes:
-      label: Privacy check
+      label: Note-write impact
       options:
-        - label: I removed all private note content, credentials, provider responses, and identifying paths.
-          required: true
+        - No note write was attempted
+        - The plugin safely blocked the write
+        - A reviewed write was applied as expected
+        - An unexpected note or scope changed
+        - Possible data loss or later edit overwrite
+    validations:
+      required: true

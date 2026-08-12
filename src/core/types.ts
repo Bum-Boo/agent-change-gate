@@ -145,6 +145,7 @@ export interface ReplacementValidation {
 export interface AgentDiagnostics {
   ok: boolean;
   message: string;
+  stage?: "discovery" | "initialization";
   executable?: string;
   transport?: AcpTransport;
   profiles?: string[];

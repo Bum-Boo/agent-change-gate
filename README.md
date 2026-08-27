@@ -1,5 +1,7 @@
 # Agent Change Gate
 
+[English](README.md) | [한국어](docs/README.ko.md) | [日本語](docs/README.ja.md) | [中文](docs/README.zh-CN.md)
+
 [![CI](https://github.com/Bum-Boo/agent-change-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/Bum-Boo/agent-change-gate/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -156,3 +158,5 @@ Funding is not enabled. No donation URL or `.github/FUNDING.yml` is shipped. Spo
 ## License
 
 [MIT](LICENSE). See [docs/OPEN_SOURCE.md](docs/OPEN_SOURCE.md) for the complete dependency provenance record.
+
+If you adapt or share this project, a mention of [@Bum-Boo and the original repository](https://github.com/Bum-Boo/agent-change-gate) would be appreciated. This is a courteous request, separate from—and not an additional condition of—the MIT License.

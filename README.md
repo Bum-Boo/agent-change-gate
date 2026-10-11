@@ -5,13 +5,27 @@
 [![CI](https://github.com/Bum-Boo/agent-change-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/Bum-Boo/agent-change-gate/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> ACP-proposed edits returned through this chat are scope-checked and stay drafts until you review them.
+Chat with an AI agent about one Obsidian note. When it suggests an edit, you see exactly which lines change, and nothing is written until you click **Apply this edit**.
+
+```mermaid
+flowchart LR
+  A["Pick a scope<br/>note body, selection or frontmatter"] --> B["Agent proposes an edit"]
+  B --> C["Line diff<br/>added and removed lines"]
+  C -- "Apply this edit" --> D["Note updated"]
+  C -- "Discard" --> E["Note unchanged"]
+```
+
+Works with [Hermes Agent](https://github.com/NousResearch/hermes-agent) out of the box, and with other ACP agents you register. Windows native and WSL.
+
+**[Download 0.2.0](https://github.com/Bum-Boo/agent-change-gate/releases/tag/0.2.0)** · [Install](#install-for-testing) · [How to use](#use)
+
+> Status: public prerelease (`0.2.0`) for manual testing. It is downloadable from GitHub Releases but is not yet listed in Obsidian Community Plugins. Core helpers, transport bounds, session lifecycle, and state retention have automated tests, and Hermes ACP initialization has been verified. Obsidian GUI/model workflows, external beta use, and broader compatibility remain unverified.
+
+## How it works
 
 Agent Change Gate is a desktop ACP client for deliberate note work. Choose the current note body, an exact selection, or existing YAML frontmatter when you send a request. The plugin captures that scope, keeps the conversation tied to the note and agent, and treats every proposed replacement as a draft.
 
 A reviewable draft is shown as a bounded, complete line diff and is applied only after you approve it. Normal-sized comparisons use an exact line diff; when exact comparison work exceeds the bound, the modal uses a coarse but complete remove/add fallback. Oversized proposals that cannot be rendered completely are not applyable. If the note path or captured content changed while the agent was responding, the proposal is refused instead of being applied to stale text.
-
-> Status: public prerelease (`0.2.0`) for manual testing. It is downloadable from GitHub Releases but is not yet listed in Obsidian Community Plugins. Core helpers, transport bounds, session lifecycle, and state retention have automated tests, and Hermes ACP initialization has been verified. Obsidian GUI/model workflows, external beta use, and broader compatibility remain unverified.
 
 ## What the gate covers
 

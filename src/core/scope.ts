@@ -22,6 +22,12 @@ export function scopeContextKey(snapshot: ScopeSnapshot): string {
   }));
 }
 
+function splitsSurrogatePair(text: string, offset: number): boolean {
+  const before = text.charCodeAt(offset - 1);
+  const after = text.charCodeAt(offset);
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+}
+
 export function findFrontmatterRange(text: string): TextRange | null {
   const opening = /^---[\t ]*(?:\r?\n|$)/.exec(text);
   if (!opening || opening[0].length === text.length) {
@@ -55,10 +61,18 @@ export function resolveScopeRange(
     if (!selection || selection.from === selection.to) {
       throw new Error("Select some note text before using Selection scope.");
     }
+    for (const offset of [selection.from, selection.to]) {
+      if (Number.isNaN(offset) || (Number.isFinite(offset) && !Number.isInteger(offset))) {
+        throw new Error("The selection offsets must be whole numbers.");
+      }
+    }
     const from = Math.max(0, Math.min(selection.from, selection.to));
     const to = Math.min(fullText.length, Math.max(selection.from, selection.to));
     if (from >= to) {
       throw new Error("The selected range is outside the current note.");
+    }
+    if (splitsSurrogatePair(fullText, from) || splitsSurrogatePair(fullText, to)) {
+      throw new Error("The selection starts or ends inside a surrogate pair (for example an emoji).");
     }
     return { from, to };
   }

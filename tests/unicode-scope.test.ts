@@ -34,13 +34,17 @@ describe("scope replacement keeps everything outside the captured scope", () => 
     for (const scope of scopes) {
       for (const replacement of REPLACEMENTS) {
         it(`${name}/${scope}/${JSON.stringify(replacement)}`, () => {
-          let snapshot;
-          try {
-            snapshot = captureScope("N.md", note, scope, { from: 0, to: Math.min(note.length, 5) });
-          } catch {
-            // frontmatter on a note without it, selection on an empty note: refusal is the contract.
+          const selection = { from: 0, to: Math.min(note.length, 5) };
+          const hasFrontmatter = findFrontmatterRange(note) !== null;
+          if (scope === "frontmatter" && !hasFrontmatter) {
+            expect(() => captureScope("N.md", note, scope, selection)).toThrow(/no YAML frontmatter/);
             return;
           }
+          if (scope === "selection" && selection.from === selection.to) {
+            expect(() => captureScope("N.md", note, scope, selection)).toThrow(/Select some note text/);
+            return;
+          }
+          const snapshot = captureScope("N.md", note, scope, selection);
           expect(note.slice(snapshot.from, snapshot.to)).toBe(snapshot.originalScope);
           const after = applyReplacement(snapshot, replacement);
           const prefix = note.slice(0, snapshot.from);

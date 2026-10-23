@@ -29,7 +29,9 @@
 | `npm run typecheck` | 오류 없음 |
 | `npm run build` | 성공 |
 | `npm run validate:release` | "Release metadata valid for agent-change-gate 0.2.0." |
-기존 실패 없음.
+기존 실패 없음. (리뷰 반영 후 재실행: 동일하게 16 파일 241 테스트, 신규 파일 154 테스트 통과.)
+
+리뷰 반영: 첫 번째 표 테스트의 포괄적 `catch`를 제거하고, 예상된 거부(프론트매터 없는 노트의 frontmatter 스코프, 빈 선택)만 `toThrow(메시지)`로 명시 검증. 그 외 모든 예외는 테스트 실패로 처리됨.
 
 ## 남은 한계 (미수정·미검증)
 - 실제 Obsidian GUI, Hermes 에이전트, `editor.posToOffset`/CodeMirror의 줄바꿈 정규화는 클라우드에서 실행 불가라 미검증. CRLF 노트에서 에디터 오프셋과 파일 바이트 오프셋의 관계는 가정에 의존.

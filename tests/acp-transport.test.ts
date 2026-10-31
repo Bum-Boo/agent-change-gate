@@ -594,6 +594,141 @@ describe("ACP pool compatibility", () => {
     }
   });
 
+  describe("approval gate", () => {
+    // The fake agent probes the client during one prompt and reports exactly
+    // what came back, so an SDK upgrade cannot silently start granting access.
+    const probeScript = (probes: { method: string; params: unknown }[]) => [
+      "const send=(value)=>process.stdout.write(JSON.stringify(value)+'\\n');",
+      "const probes=",
+      JSON.stringify(probes),
+      ";let pending='';let capabilities=null;const waiting=new Map();process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data',(chunk)=>{pending+=chunk;for(;;){",
+      "const newline=pending.indexOf('\\n');if(newline<0)break;",
+      "const line=pending.slice(0,newline);pending=pending.slice(newline+1);if(!line)continue;",
+      "const message=JSON.parse(line);",
+      "if(message.method===undefined&&waiting.has(message.id)){waiting.get(message.id)(message);waiting.delete(message.id);continue;}",
+      "if(message.method==='initialize'){capabilities=message.params.clientCapabilities;",
+      "send({jsonrpc:'2.0',id:message.id,result:{protocolVersion:message.params.protocolVersion,agentCapabilities:{sessionCapabilities:{close:{}}}}});}",
+      "else if(message.method==='session/new')send({jsonrpc:'2.0',id:message.id,result:{sessionId:'gate-session'}});",
+      "else if(message.method==='session/close')send({jsonrpc:'2.0',id:message.id,result:{}});",
+      "else if(message.method==='session/prompt'){const sessionId=message.params.sessionId;",
+      "Promise.all(probes.map((probe,index)=>new Promise((resolve)=>{const id='probe-'+index;waiting.set(id,resolve);",
+      "send({jsonrpc:'2.0',id,method:probe.method,params:{sessionId,...probe.params}});}))).then((replies)=>{",
+      "const report={capabilities,replies:replies.map((reply)=>reply.error?{error:reply.error.code}:{result:reply.result})};",
+      "send({jsonrpc:'2.0',method:'session/update',params:{sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify(report)}}}});",
+      "send({jsonrpc:'2.0',id:message.id,result:{stopReason:'end_turn'}});});}",
+      "}});",
+    ].join("");
+
+    const toolCall = { toolCallId: "call-1", title: "Edit note", kind: "edit", status: "pending" };
+    const option = (optionId: string, kind: string) => ({ optionId, name: optionId, kind });
+
+    async function probe(id: string, probes: { method: string; params: unknown }[]) {
+      const pool = new AcpPool();
+      try {
+        const text = await pool.prompt(rawNodeAgentProfile(id, probeScript(probes)), "gate-thread", "Probe.", {
+          timeoutMs: 5_000,
+        });
+        return JSON.parse(text) as { capabilities: unknown; replies: unknown[] };
+      } finally {
+        pool.reset();
+      }
+    }
+
+    it("advertises no filesystem or terminal client capability", async () => {
+      const report = await probe("gate-capabilities", []);
+      expect(report.capabilities).toEqual({});
+    });
+
+    it("answers permission requests with the strongest rejection or a cancellation", async () => {
+      const report = await probe("gate-permission", [
+        {
+          method: "session/request_permission",
+          params: {
+            toolCall,
+            options: [option("allow", "allow_once"), option("always", "allow_always"),
+              option("no", "reject_once"), option("never", "reject_always")],
+          },
+        },
+        {
+          method: "session/request_permission",
+          params: { toolCall, options: [option("allow", "allow_once"), option("no", "reject_once")] },
+        },
+        {
+          method: "session/request_permission",
+          params: { toolCall, options: [option("allow", "allow_once"), option("always", "allow_always")] },
+        },
+      ]);
+      expect(report.replies).toEqual([
+        { result: { outcome: { outcome: "selected", optionId: "never" } } },
+        { result: { outcome: { outcome: "selected", optionId: "no" } } },
+        { result: { outcome: { outcome: "cancelled" } } },
+      ]);
+    });
+
+    it("refuses every filesystem and terminal request as method-not-found", async () => {
+      const report = await probe("gate-fs-terminal", [
+        { method: "fs/read_text_file", params: { path: path.resolve("test-workspace/note.md") } },
+        { method: "fs/write_text_file", params: { path: path.resolve("test-workspace/note.md"), content: "x" } },
+        { method: "terminal/create", params: { command: "echo", args: ["unsafe"] } },
+        { method: "terminal/output", params: { terminalId: "t-1" } },
+        { method: "terminal/release", params: { terminalId: "t-1" } },
+        { method: "terminal/wait_for_exit", params: { terminalId: "t-1" } },
+        { method: "terminal/kill", params: { terminalId: "t-1" } },
+      ]);
+      expect(report.replies).toEqual(Array.from({ length: 7 }, () => ({ error: -32601 })));
+    });
+
+    it("cancels permission requests that arrive after the user cancelled the turn", async () => {
+      const directory = mkdtempSync(path.join(tmpdir(), "agent-change-gate-gate-"));
+      const marker = path.join(directory, "permission.json");
+      const script = [
+        "const{writeFileSync}=require('node:fs');const marker=",
+        JSON.stringify(marker),
+        ";const send=(value)=>process.stdout.write(JSON.stringify(value)+'\\n');",
+        "let pending='';let promptId=null;process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data',(chunk)=>{pending+=chunk;for(;;){",
+        "const newline=pending.indexOf('\\n');if(newline<0)break;",
+        "const line=pending.slice(0,newline);pending=pending.slice(newline+1);if(!line)continue;",
+        "const message=JSON.parse(line);",
+        "if(message.id==='late-permission'&&message.method===undefined){writeFileSync(marker,JSON.stringify(message.result));",
+        "send({jsonrpc:'2.0',id:promptId,result:{stopReason:'cancelled'}});}",
+        "else if(message.method==='initialize')send({jsonrpc:'2.0',id:message.id,result:{protocolVersion:message.params.protocolVersion,agentCapabilities:{sessionCapabilities:{close:{}}}}});",
+        "else if(message.method==='session/new')send({jsonrpc:'2.0',id:message.id,result:{sessionId:'late-session'}});",
+        "else if(message.method==='session/close')send({jsonrpc:'2.0',id:message.id,result:{}});",
+        "else if(message.method==='session/prompt')promptId=message.id;",
+        "else if(message.method==='session/cancel')send({jsonrpc:'2.0',id:'late-permission',method:'session/request_permission',params:{",
+        "sessionId:message.params.sessionId,toolCall:{toolCallId:'call-1',title:'Edit note',kind:'edit',status:'pending'},",
+        "options:[{optionId:'allow',name:'Allow',kind:'allow_once'},{optionId:'no',name:'Reject',kind:'reject_once'}]}});",
+        "}});",
+      ].join("");
+      const pool = new AcpPool();
+      const profile = rawNodeAgentProfile("gate-late-permission", script);
+      let markPromptStarted: (() => void) | undefined;
+      const promptStarted = new Promise<void>((resolve) => {
+        markPromptStarted = resolve;
+      });
+      try {
+        const promptResult = pool.prompt(profile, "late-thread", "Wait.", {
+          timeoutMs: 5_000,
+          onStatus: (status) => {
+            if (status.startsWith("Waiting for")) markPromptStarted?.();
+          },
+        }).then(() => null, (error: unknown) => error);
+        await promptStarted;
+        await expect(pool.cancel(profile.id, "late-thread")).resolves.toBe(true);
+        expect(await promptResult).toMatchObject({ name: "AcpTurnCancelledError" });
+
+        await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 3_000 });
+        expect(JSON.parse(readFileSync(marker, "utf8"))).toEqual({ outcome: { outcome: "cancelled" } });
+      } finally {
+        pool.reset();
+        if (existsSync(marker)) unlinkSync(marker);
+        if (existsSync(directory)) rmdirSync(directory);
+      }
+    });
+  });
+
   it("returns false when there is no active turn to cancel", async () => {
     const pool = new AcpPool();
     await expect(pool.cancel("missing-agent", "missing-thread")).resolves.toBe(false);

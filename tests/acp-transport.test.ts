@@ -10,6 +10,7 @@ import {
   ACP_MAX_FRAMES_PER_READ_CHUNK,
   ACP_MAX_INBOUND_FRAME_BYTES,
   ACP_MAX_OUTBOUND_FRAME_BYTES,
+  ACP_MAX_TURN_AUX_UPDATES,
   ACP_MAX_TURN_TEXT_CHARS,
   AcpPool,
   AcpTurnOutputLimitError,
@@ -594,6 +595,64 @@ describe("ACP pool compatibility", () => {
     }
   });
 
+  describe("session update variants added in ACP SDK 1.7", () => {
+    // `repeat` lets one update be replayed without exceeding launch argument limits.
+    const updateScript = (updates: unknown[], repeat = 1) => [
+      "const send=(value)=>process.stdout.write(JSON.stringify(value)+'\\n');",
+      "const updates=Array(",
+      String(repeat),
+      ").fill(",
+      JSON.stringify(updates),
+      ").flat();let pending='';process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data',(chunk)=>{pending+=chunk;for(;;){",
+      "const newline=pending.indexOf('\\n');if(newline<0)break;",
+      "const line=pending.slice(0,newline);pending=pending.slice(newline+1);if(!line)continue;",
+      "const message=JSON.parse(line);",
+      "if(message.method==='initialize')send({jsonrpc:'2.0',id:message.id,result:{protocolVersion:message.params.protocolVersion,agentCapabilities:{loadSession:false}}});",
+      "else if(message.method==='session/new')send({jsonrpc:'2.0',id:message.id,result:{sessionId:'variant-session'}});",
+      "else if(message.method==='session/prompt'){for(const update of updates)",
+      "send({jsonrpc:'2.0',method:'session/update',params:{sessionId:'variant-session',update}});",
+      "send({jsonrpc:'2.0',id:message.id,result:{stopReason:'end_turn'}});}",
+      "}});",
+    ].join("");
+    const text = (value: string) => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } });
+    const notice = { sessionUpdate: "notice", severity: "warning", title: "NOTICE_TEXT" };
+
+    it("keeps only agent message text in the proposal", async () => {
+      const pool = new AcpPool();
+      const profile = rawNodeAgentProfile("update-variants", updateScript([
+        text("Proposed "),
+        notice,
+        { sessionUpdate: "session_message_chunk", messageId: "m-1", content: { type: "text", text: "PEER_TEXT" } },
+        { sessionUpdate: "compaction_summary_chunk", compactionId: "c-1", content: { type: "text", text: "SUMMARY_TEXT" } },
+        text("edit."),
+      ]));
+      try {
+        await expect(pool.prompt(profile, "variant-thread", "Go.", { timeoutMs: 5_000 }))
+          .resolves.toBe("Proposed edit.");
+      } finally {
+        pool.reset();
+      }
+    });
+
+    it("counts new non-text updates against the auxiliary update bound", async () => {
+      const pool = new AcpPool();
+      const profile = rawNodeAgentProfile(
+        "notice-flood",
+        updateScript([notice], ACP_MAX_TURN_AUX_UPDATES + 1),
+      );
+      try {
+        await expect(pool.prompt(profile, "flood-thread", "Go.", { timeoutMs: 10_000 }))
+          .rejects.toMatchObject({
+            name: "AcpTurnOutputLimitError",
+            message: `ACP turn exceeded ${ACP_MAX_TURN_AUX_UPDATES} non-text or empty updates.`,
+          });
+      } finally {
+        pool.reset();
+      }
+    });
+  });
+
   describe("approval gate", () => {
     // The fake agent probes the client during one prompt and reports exactly
     // what came back, so an SDK upgrade cannot silently start granting access.
@@ -677,6 +736,19 @@ describe("ACP pool compatibility", () => {
         { method: "terminal/kill", params: { terminalId: "t-1" } },
       ]);
       expect(report.replies).toEqual(Array.from({ length: 7 }, () => ({ error: -32601 })));
+    });
+
+    it("refuses elicitation, MCP, and extension requests the plugin never registers", async () => {
+      const report = await probe("gate-unregistered", [
+        {
+          method: "elicitation/create",
+          params: { mode: "form", message: "Grant access?", requestedSchema: { type: "object", properties: {} } },
+        },
+        { method: "elicitation/complete", params: { elicitationId: "e-1" } },
+        { method: "mcp/message", params: { connectionId: "c-1", message: {} } },
+        { method: "_vendor/grant_access", params: {} },
+      ]);
+      expect(report.replies).toEqual(Array.from({ length: 4 }, () => ({ error: -32601 })));
     });
 
     it("cancels permission requests that arrive after the user cancelled the turn", async () => {

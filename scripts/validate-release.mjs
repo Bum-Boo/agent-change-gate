@@ -8,6 +8,13 @@ const thirdPartyNotices = await readFile("THIRD_PARTY_NOTICES.md", "utf8");
 const openSourceProvenance = await readFile("docs/OPEN_SOURCE.md", "utf8");
 const apacheLicense = await readFile("LICENSES/Apache-2.0.txt", "utf8");
 const zodLicense = await readFile("LICENSES/Zod-MIT.txt", "utf8");
+const lockedPackages = JSON.parse(await readFile("package-lock.json", "utf8")).packages;
+
+const lockedVersion = (name) => {
+  const version = lockedPackages[`node_modules/${name}`]?.version;
+  if (!version) throw new Error(`package-lock.json does not lock ${name}.`);
+  return version;
+};
 
 if (manifest.id !== "agent-change-gate") throw new Error("Unexpected plugin ID.");
 if (manifest.name !== "Agent Change Gate") throw new Error("Unexpected plugin name.");
@@ -44,6 +51,27 @@ for (const sourceUrl of [
 ]) {
   if (!openSourceProvenance.includes(sourceUrl)) {
     throw new Error(`Open-source provenance is missing ${sourceUrl}.`);
+  }
+}
+for (const name of [
+  "@agentclientprotocol/sdk",
+  "zod",
+  "obsidian",
+  "esbuild",
+  "typescript",
+  "vitest",
+  "@types/node",
+]) {
+  if (!openSourceProvenance.includes(`| \`${name}\` | ${lockedVersion(name)} |`)) {
+    throw new Error(`docs/OPEN_SOURCE.md does not record the locked ${name} ${lockedVersion(name)}.`);
+  }
+}
+for (const [label, name] of [
+  ["Agent Client Protocol TypeScript SDK", "@agentclientprotocol/sdk"],
+  ["Zod", "zod"],
+]) {
+  if (!thirdPartyNotices.includes(`${label}](`) || !thirdPartyNotices.includes(`) ${lockedVersion(name)} - `)) {
+    throw new Error(`THIRD_PARTY_NOTICES.md does not record the bundled ${name} ${lockedVersion(name)}.`);
   }
 }
 if (!apacheLicense.includes("Apache License") || !apacheLicense.includes("Version 2.0")) {

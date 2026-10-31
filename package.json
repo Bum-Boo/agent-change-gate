@@ -37,7 +37,7 @@
     "@agentclientprotocol/sdk": "1.7.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^24.19.1",
     "esbuild": "0.28.2",
     "obsidian": "1.14.4",
     "typescript": "^5.9.3",
